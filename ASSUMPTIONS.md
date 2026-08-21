@@ -82,6 +82,21 @@ default for trucking entities.
 **If wrong:** Templates are versioned data. Add v2, leave v1 lines intact so
 historical periods still read correctly.
 
+### A-10 · When an intercompany elimination takes effect
+**Assumed:** An elimination is applied only once **both** sides' periods are
+`approved` or `locked`. Until then the transaction sits in the registry
+unapplied, and the completeness banner already says the figure is not final.
+**Why this is not a free choice:** `revenue_sum` only counts approved and
+locked periods. Eliminating against revenue that was never added subtracts an
+amount that is not in the total, so `revenue_consolidated` comes out too low.
+The alternative — eliminate immediately — would require `revenue_sum` to
+include unapproved periods, which defeats the approval workflow.
+**If wrong:** If the client wants eliminations recognised on the earlier of
+the two approvals, the `elim` CTE in `v_group_consolidated` changes from two
+`exists` clauses to one. No schema change.
+**Not a policy key.** This is arithmetic consistency with the approval filter,
+not an accounting policy, so nothing is added to `accounting_policies`.
+
 ---
 
 ## Resolved

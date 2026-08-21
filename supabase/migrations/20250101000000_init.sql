@@ -291,8 +291,18 @@ create table accounting_policies (
   )
 );
 
+-- effective_from WAJIB null selama kebijakan belum diputuskan (lihat check
+-- constraint di atas), dan NULL tidak pernah sama dengan NULL di indeks
+-- unik — sehingga versi tanpa coalesce sama sekali tidak mencegah duplikat
+-- justru pada baris yang paling mungkin diisi dua kali. Dasbor menghitung
+-- baris ber-chosen_value NULL, jadi duplikat langsung menggelembungkan
+-- jumlah "kebijakan belum diputuskan".
 create unique index accounting_policies_unique_idx
-  on accounting_policies (policy_key, coalesce(entity_id, '00000000-0000-0000-0000-000000000000'::uuid), effective_from);
+  on accounting_policies (
+    policy_key,
+    coalesce(entity_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    coalesce(effective_from, '-infinity'::date)
+  );
 
 
 -- =====================================================================
@@ -431,12 +441,28 @@ security definer
 set search_path = public
 as $$
 declare
-  v_pk text;
+  v_row jsonb;
+  v_pk  text;
 begin
-  v_pk := coalesce(
-    (to_jsonb(new) ->> 'id'),
-    (to_jsonb(old) ->> 'id')
-  );
+  v_row := coalesce(to_jsonb(new), to_jsonb(old));
+  v_pk  := v_row ->> 'id';
+
+  -- Tidak semua tabel yang diaudit memiliki kolom `id`:
+  -- user_entity_access berkunci komposit (user_id, entity_id). Ambil
+  -- kolom kunci primer dari katalog agar record_pk tetap terisi —
+  -- audit_log.record_pk NOT NULL, sehingga versi yang hanya membaca
+  -- 'id' membuat tabel berkunci komposit mustahil ditulis.
+  if v_pk is null then
+    select string_agg(v_row ->> a.attname, ':' order by k.ord)
+      into v_pk
+    from pg_index i
+    cross join lateral unnest(i.indkey) with ordinality as k(attnum, ord)
+    join pg_attribute a
+      on a.attrelid = i.indrelid
+     and a.attnum   = k.attnum
+    where i.indrelid = tg_relid
+      and i.indisprimary;
+  end if;
 
   insert into audit_log (actor_id, table_name, record_pk, action, old_value, new_value)
   values (
@@ -511,7 +537,87 @@ create trigger report_lines_guard before insert or update or delete on report_li
   for each row execute function guard_period_editable();
 
 
--- --- 11e. Transisi status periode yang sah ----------------------------
+-- --- 11d-bis. line_code harus ada pada template periode ---------------
+--
+--  v_period_pnl menjumlahkan lewat join ke report_template_lines. Baris
+--  dengan line_code yang tidak ada di template menghasilkan section NULL,
+--  sehingga tidak masuk ke SATU PUN `filter (where tl.section = ...)`:
+--  nominalnya hilang dari pendapatan, beban, dan laba bersih tanpa error.
+--  Salah ketik satu kode membuat laporan tetap "seimbang" tapi salah.
+--
+--  Ini bukan foreign key karena template_id ada di `periods`, bukan di
+--  `report_lines` — FK tidak dapat menyeberangi tabel seperti itu.
+
+create or replace function guard_line_code_in_template()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_template_id uuid;
+begin
+  select template_id into v_template_id from periods where id = new.period_id;
+
+  if not exists (
+    select 1 from report_template_lines tl
+    where tl.template_id = v_template_id
+      and tl.line_code   = new.line_code
+      and tl.is_active
+  ) then
+    raise exception
+      'Kode baris % tidak ada (atau tidak aktif) pada template periode ini',
+      new.line_code;
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger report_lines_template_guard before insert or update on report_lines
+  for each row execute function guard_line_code_in_template();
+
+
+-- --- 11e. Periode baru selalu lahir sebagai draft ---------------------
+--
+--  guard_period_transition() hanya berjalan pada UPDATE. Tanpa penjaga
+--  INSERT, policy periods_insert mengizinkan staf entitas membuat periode
+--  yang langsung berstatus 'approved' — melewati seluruh alur persetujuan,
+--  dan dihitung dasbor sebagai entitas yang sudah melapor meski tidak ada
+--  satu pun baris laporan di dalamnya.
+
+create or replace function guard_period_insert()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status <> 'draft' then
+    raise exception 'Periode baru harus berstatus draft, bukan %', new.status;
+  end if;
+
+  -- Kolom jejak alur kerja hanya boleh diisi oleh transisi yang sah.
+  new.submitted_by := null;
+  new.submitted_at := null;
+  new.approved_by  := null;
+  new.approved_at  := null;
+  new.locked_by    := null;
+  new.locked_at    := null;
+
+  -- Pembuat adalah pengguna yang sedang masuk. Nilai yang dikirim klien
+  -- tidak dipercaya; nilai dari seed (auth.uid() null) dibiarkan apa adanya.
+  new.created_by := coalesce(auth.uid(), new.created_by);
+
+  return new;
+end;
+$$;
+
+create trigger periods_insert_guard before insert on periods
+  for each row execute function guard_period_insert();
+
+
+-- --- 11f. Transisi status periode yang sah ----------------------------
 
 create or replace function guard_period_transition()
 returns trigger
@@ -534,8 +640,28 @@ begin
     raise exception 'Transisi status tidak sah: % -> %', old.status, new.status;
   end if;
 
-  -- Segregation of duties: penyusun tidak boleh menyetujui pekerjaannya sendiri.
-  if new.status = 'approved' and new.approved_by = old.submitted_by then
+  -- Kolom pelaku harus benar-benar pelakunya. Tanpa ini jejak audit dapat
+  -- diisi nama orang lain — dan, yang lebih parah, pemisahan tugas di bawah
+  -- dapat dilewati hanya dengan TIDAK mengisi approved_by: versi lama
+  -- membandingkan `new.approved_by = old.submitted_by`, yang menghasilkan
+  -- NULL (bukan true) saat approved_by kosong, sehingga cek tidak berjalan.
+  -- Sesi tanpa auth.uid() (psql/service role) lolos di sini dan dihentikan
+  -- oleh can_approve() di bawah, yang juga NULL untuk sesi seperti itu.
+  if auth.uid() is not null then
+    if new.status = 'submitted' and new.submitted_by is distinct from auth.uid() then
+      raise exception 'submitted_by harus pengguna yang sedang masuk';
+    end if;
+    if new.status = 'approved' and new.approved_by is distinct from auth.uid() then
+      raise exception 'approved_by harus pengguna yang sedang masuk';
+    end if;
+    if new.status = 'locked' and new.locked_by is distinct from auth.uid() then
+      raise exception 'locked_by harus pengguna yang sedang masuk';
+    end if;
+  end if;
+
+  -- Segregation of duties, aman terhadap NULL.
+  if new.status = 'approved'
+     and new.approved_by is not distinct from old.submitted_by then
     raise exception 'Pengaju tidak dapat menyetujui submission-nya sendiri';
   end if;
 
@@ -544,16 +670,26 @@ begin
     raise exception 'Peran Anda tidak berwenang menyetujui atau mengunci periode';
   end if;
 
+  -- Membatalkan persetujuan mengeluarkan entitas dari konsolidasi dan
+  -- membuka kembali report_lines. Itu wewenang yang sama dengan menyetujui,
+  -- bukan wewenang staf entitas atas periodenya sendiri.
+  if old.status = 'approved' and new.status = 'draft' and not can_approve() then
+    raise exception 'Peran Anda tidak berwenang membatalkan persetujuan periode';
+  end if;
+
   -- Membuka kunci hanya oleh direksi, dan selalu tercatat di audit log.
   if old.status = 'locked' and new.status = 'draft'
      and current_user_role() <> 'direksi' then
     raise exception 'Hanya direksi yang dapat membuka periode yang sudah dikunci';
   end if;
 
-  -- Penolakan wajib disertai catatan.
-  if old.status = 'submitted' and new.status = 'draft'
+  -- Setiap pengembalian ke draft wajib disertai catatan, bukan hanya
+  -- penolakan dari 'submitted'. Membuka kembali periode yang sudah
+  -- disetujui atau dikunci justru lebih perlu alasan tertulis.
+  if new.status = 'draft'
+     and old.status in ('submitted', 'approved', 'locked')
      and coalesce(trim(new.rejection_note), '') = '' then
-    raise exception 'Penolakan wajib disertai catatan alasan';
+    raise exception 'Pengembalian ke draft wajib disertai catatan alasan';
   end if;
 
   return new;
@@ -703,6 +839,54 @@ create policy audit_select on audit_log for select to authenticated
   using (can_read_all_entities());
 
 
+-- --- HAK AKSES TABEL (GRANT) -------------------------------------------
+--
+--  RLS MEMPERSEMPIT hak akses, bukan memberikannya. Tanpa GRANT di bawah
+--  ini setiap query dari aplikasi gagal dengan 42501 "permission denied",
+--  tidak peduli sebaik apa policy-nya. Tabel yang dibuat lewat migrasi
+--  tidak mewarisi grant apa pun — hanya tabel yang dibuat lewat Studio
+--  yang mendapatkannya secara otomatis.
+--
+--  Peran 'anon' sengaja tidak diberi apa pun: seluruh portal butuh login.
+
+grant usage on schema public to authenticated;
+
+grant select on
+  entities,
+  profiles,
+  user_entity_access,
+  report_templates,
+  report_template_lines,
+  periods,
+  report_lines,
+  intercompany_transactions,
+  accounting_policies,
+  audit_log
+to authenticated;
+
+-- Hak tulis diberikan seluas policy yang ada; policy-lah yang memutuskan
+-- siapa yang benar-benar boleh. Tabel tanpa policy FOR ALL tidak diberi
+-- DELETE, agar grant tidak lebih luas daripada aturannya.
+grant insert, update, delete on
+  entities,
+  profiles,
+  user_entity_access,
+  report_templates,
+  report_template_lines,
+  report_lines,
+  intercompany_transactions,
+  accounting_policies
+to authenticated;
+
+-- periods hanya punya policy SELECT/INSERT/UPDATE — tidak ada penghapusan
+-- periode; pembatalan dilakukan dengan mengembalikan status ke draft.
+grant insert, update on periods to authenticated;
+
+-- audit_log sengaja SELECT saja. Isinya ditulis oleh trigger SECURITY
+-- DEFINER milik postgres, jadi tidak ada jalur tulis dari aplikasi sama
+-- sekali (invarian 4). Trigger audit_log_immutable menutup sisanya.
+
+
 -- =====================================================================
 --  BAGIAN 13 — VIEW PELAPORAN
 --
@@ -761,12 +945,17 @@ join entities e on e.id = a.entity_id;
 create view v_period_completeness
 with (security_invoker = on)
 as
+-- `e.is_active` harus ada di KEDUA hitungan. Bila hanya expected yang
+-- difilter, entitas yang sudah dinonaktifkan tapi punya periode disetujui
+-- tetap ikut terhitung sebagai "sudah melapor", sehingga reported bisa
+-- melebihi expected: is_complete selamanya false dan dasbor menampilkan
+-- "-1 belum lapor".
 select
   per.period,
-  count(*) filter (where e.is_active)                          as expected_entities,
-  count(pd.id) filter (where pd.status in ('approved','locked')) as reported_entities,
+  count(*) filter (where e.is_active)                                        as expected_entities,
+  count(pd.id) filter (where e.is_active and pd.status in ('approved','locked')) as reported_entities,
   count(*) filter (where e.is_active)
-    = count(pd.id) filter (where pd.status in ('approved','locked')) as is_complete,
+    = count(pd.id) filter (where e.is_active and pd.status in ('approved','locked')) as is_complete,
   array_agg(e.code) filter (
     where e.is_active
       and (pd.id is null or pd.status not in ('approved','locked'))
@@ -794,10 +983,32 @@ with summed as (
   where status in ('approved', 'locked')
   group by period
 ),
+-- Eliminasi hanya berlaku bila KEDUA sisi transaksi sudah masuk
+-- penjumlahan. `summed` di atas hanya menghitung periode approved/locked;
+-- mengeliminasi transaksi yang lawan-sisinya belum disetujui berarti
+-- mengurangi omset yang belum pernah ditambahkan, dan hasil konsolidasi
+-- menjadi terlalu kecil. Ini bukan pilihan kebijakan akuntansi — ini
+-- konsistensi aritmetik dengan filter di `summed`.
+--
+-- Transaksi yang tertunda karena sebab ini tidak hilang; ia ikut lagi
+-- begitu kedua periode disetujui, dan sampai saat itu banner kelengkapan
+-- sudah memberi tahu bahwa angkanya belum final.
 elim as (
-  select period, sum(amount) as elimination
-  from intercompany_transactions
-  group by period
+  select ic.period, sum(ic.amount) as elimination
+  from intercompany_transactions ic
+  where exists (
+          select 1 from periods ps
+          where ps.entity_id = ic.seller_entity_id
+            and ps.period    = ic.period
+            and ps.status in ('approved', 'locked')
+        )
+    and exists (
+          select 1 from periods pb
+          where pb.entity_id = ic.buyer_entity_id
+            and pb.period    = ic.period
+            and pb.status in ('approved', 'locked')
+        )
+  group by ic.period
 )
 select
   s.period,
@@ -806,6 +1017,12 @@ select
   s.revenue_sum - coalesce(e.elimination,0) as revenue_consolidated,
   s.cogs_sum,
   s.opex_sum,
+  -- Tanpa penyesuaian eliminasi, dan itu benar: satu baris
+  -- intercompany_transactions adalah SATU nominal yang menjadi omset di
+  -- satu buku dan beban di buku lawannya. Mengeliminasinya mengurangi
+  -- omset dan beban dengan angka yang sama, sehingga laba bersih grup
+  -- tidak berubah. Yang berubah hanyalah baris teratas dan bentuk
+  -- laporannya (lihat CONTEXT.md, "Konsolidasi bukan penjumlahan").
   s.net_profit_sum                          as net_profit_consolidated,
   c.is_complete,
   c.missing_entities
@@ -842,6 +1059,20 @@ left join v_period_pnl mom
 left join v_period_pnl yoy
        on yoy.entity_id = cur.entity_id
       and yoy.period    = cur.period - interval '1 year';
+
+
+-- --- 13e. Hak akses view ----------------------------------------------
+--  Diberikan di sini, bukan di BAGIAN 12, karena view baru ada setelah
+--  definisinya di atas. security_invoker = on berarti pemanggil butuh
+--  SELECT pada view DAN pada tabel di baliknya; grant tabel ada di
+--  BAGIAN 12.
+
+grant select on
+  v_period_pnl,
+  v_period_completeness,
+  v_group_consolidated,
+  v_period_comparison
+to authenticated;
 
 
 -- =====================================================================
