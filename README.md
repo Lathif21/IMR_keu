@@ -10,6 +10,7 @@ Read these before writing code:
 | [CLAUDE.md](CLAUDE.md) | Non-negotiable invariants. Violating one produces wrong reports. |
 | [CONTEXT.md](CONTEXT.md) | Indonesian domain vocabulary. Mixing terms up has already produced wrong numbers once. |
 | [ASSUMPTIONS.md](ASSUMPTIONS.md) | Accounting policies that are still undecided. The system surfaces them; it never picks a default. |
+| [TESTING.md](TESTING.md) | End-to-end checks, with the exact fixture values and the failure mode each guard prevents. Run the regression checklist before committing schema changes. |
 
 ## Stack
 

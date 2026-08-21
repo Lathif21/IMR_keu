@@ -20,11 +20,16 @@
 -- =====================================================================
 
 -- Triggers on `periods` call can_approve(), which resolves auth.uid().
--- Seeding as postgres bypasses RLS but NOT triggers, so the status
--- transitions below run under an impersonated JWT. This seed therefore
--- goes through the segregation-of-duties guard instead of sidestepping it.
+-- Seeding as postgres bypasses RLS but NOT triggers, so every step below runs
+-- under an impersonated JWT. This seed therefore goes through the same guards
+-- the UI does — the segregation-of-duties check included — instead of
+-- sidestepping them, and audit_log.actor_id comes out populated rather than
+-- NULL, which is what the real audit trail looks like.
 
 begin;
+
+-- Master data is the director's to create.
+set local request.jwt.claims = '{"sub":"a0000000-0000-4000-a000-000000000001","role":"authenticated"}';
 
 -- --- 1. Users -------------------------------------------------------------
 --  Passwords are local-only. Nothing here is a credential for any deployed
@@ -102,6 +107,11 @@ insert into user_entity_access (user_id, entity_id, granted_by) values
 -- --- 3. Periods and lines -------------------------------------------------
 --  Lines are only writable while the period is 'draft' (invariant 5), so
 --  every period is created as draft, filled, then transitioned in step 4.
+--
+--  guard_period_insert() overwrites created_by with auth.uid(), so the claim
+--  has to be the staff account here rather than passed as a column value.
+
+set local request.jwt.claims = '{"sub":"a0000000-0000-4000-a000-000000000003","role":"authenticated"}';
 
 insert into periods (id, entity_id, period, template_id, status, created_by) values
   ('d0000000-0000-4000-a000-000000000001', 'e0000000-0000-4000-a000-000000000001',
@@ -177,8 +187,7 @@ insert into report_lines (period_id, line_code, amount) values
 --  Submit as the entity staff, approve as the finance manager. Approving as
 --  the submitter would trip the segregation-of-duties trigger (invariant 6),
 --  which is the point: the seed passes through the same gate the UI does.
-
-set local request.jwt.claims = '{"sub":"a0000000-0000-4000-a000-000000000003","role":"authenticated"}';
+--  The claim is still the staff account from step 3.
 
 update periods
    set status = 'submitted',
