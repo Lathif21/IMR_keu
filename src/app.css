@@ -1,0 +1,75 @@
+/* Design tokens — ported from Figma Make "Financial Reporting Portal".
+   Dark-only. There is no light theme; the source file defines :root and
+   .dark identically. Don't add one without a design decision.
+
+   Rule: use the token, never the hex. The Figma export hardcodes
+   bg-[#18181B] everywhere; that is an export artifact, not the design. */
+
+@import "tailwindcss";
+
+@theme {
+  /* surfaces */
+  --color-background: #0a0a0b;
+  --color-foreground: #fafafa;
+  --color-card: #18181b;
+  --color-popover: #18181b;
+  --color-muted: #27272a;
+  --color-muted-foreground: #a1a1aa;
+  --color-subtle: #52525b;      /* captions, "belum lapor", disabled */
+  --color-border: #27272a;
+  --color-border-strong: #3f3f46; /* totals row top border only */
+
+  /* brand */
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #ffffff;
+  --color-accent: #1d4ed8;
+
+  /* semantic — see usage rules below */
+  --color-positive: #22c55e;
+  --color-warning: #f59e0b;
+  --color-destructive: #ef4444;
+
+  /* entity/business-line series. Order is fixed: assigning by array index
+     means a line changes colour when an entity is added. Store the key on
+     the entity row (entities.theme_color) instead. */
+  --color-line-1: #3b82f6;  /* logistik  */
+  --color-line-2: #8b5cf6;  /* amdk      */
+  --color-line-3: #f59e0b;  /* tambang   */
+  --color-line-4: #22c55e;  /* garam     */
+
+  --radius: 0.5rem;
+  --text-base-size: 14px;
+}
+
+@layer base {
+  html {
+    font-size: var(--text-base-size);
+    font-family: "Inter", system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /* Every figure in this app is money or a percentage. Column alignment
+     across periods is the whole point of a financial statement. */
+  .num,
+  table td:not(:first-child),
+  table th:not(:first-child) {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ── Colour usage rules ────────────────────────────────────────────────────
+   Financial colour carries meaning. Don't reuse these decoratively.
+
+   positive     profit, favourable variance
+   destructive  loss, unfavourable variance, threshold breach
+   warning      incomplete data, undecided policy, needs attention
+                — never a loss; a loss is destructive, missing data is warning
+   subtle       "—" for no data. Distinct from zero, which renders as 0.
+
+   Negative amounts render in parentheses, not with a minus sign:
+   (2.178.807), not -2.178.807. Accounting convention; the export does
+   this correctly.
+   ─────────────────────────────────────────────────────────────────────── */

@@ -1,0 +1,16 @@
+node_modules/
+/.svelte-kit/
+/build/
+/dist/
+
+# Secrets. .env.example is committed; nothing else is.
+.env
+.env.*
+!.env.example
+
+# Supabase CLI local state
+/supabase/.temp/
+/supabase/.branches/
+
+.DS_Store
+Thumbs.db
