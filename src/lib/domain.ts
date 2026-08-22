@@ -33,6 +33,47 @@ export const PERIOD_STATUS_LABEL: Record<PeriodStatus, string> = {
   locked: 'Dikunci'
 };
 
+/**
+ * Fixed presentation order of the sections in a statement. Not the enum's
+ * declaration order by accident — a statement read out of order is a
+ * different document, so it is written down once here.
+ */
+export const LINE_SECTION_ORDER: LineSection[] = [
+  'revenue',
+  'cogs',
+  'opex',
+  'other_income',
+  'other_expense',
+  'tax'
+];
+
+export const LINE_SECTION_LABEL: Record<LineSection, string> = {
+  revenue: 'Pendapatan',
+  cogs: 'Beban Pokok Pendapatan',
+  opex: 'Beban Usaha',
+  other_income: 'Pendapatan Lain-lain',
+  other_expense: 'Beban Lain-lain',
+  tax: 'Pajak Penghasilan'
+};
+
+/**
+ * How each section enters the result, matching `v_period_pnl` exactly:
+ *
+ *   revenue - cogs - opex + other_income - other_expense - tax
+ *
+ * The entry form's footer totals are the same arithmetic on unsaved values.
+ * Deriving them from this map rather than restating the formula is what stops
+ * the screen and the view disagreeing about a month's net profit.
+ */
+export const LINE_SECTION_SIGN: Record<LineSection, 1 | -1> = {
+  revenue: 1,
+  cogs: -1,
+  opex: -1,
+  other_income: 1,
+  other_expense: -1,
+  tax: -1
+};
+
 export const ROLE_LABEL: Record<UserRole, string> = {
   direksi: 'Direksi',
   manajer_keuangan: 'Manajer Keuangan',

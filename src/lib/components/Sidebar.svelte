@@ -32,8 +32,8 @@
       visible: canReadAllEntities(role)
     },
     { label: 'Laporan P&L', icon: FileText, href: null, visible: true },
-    { label: 'Input Laporan', icon: ClipboardList, href: null, visible: canEnterReports(role) },
-    { label: 'Persetujuan', icon: CircleCheckBig, href: null, visible: canApprove(role) }
+    { label: 'Input Laporan', icon: ClipboardList, href: '/entry', visible: canEnterReports(role) },
+    { label: 'Persetujuan', icon: CircleCheckBig, href: '/approval', visible: canApprove(role) }
   ]);
 
   const initials = $derived(
@@ -61,7 +61,9 @@
     {#each items as item (item.label)}
       {#if item.visible}
         {#if item.href}
-          {@const active = page.url.pathname === item.href}
+          {@const active =
+            page.url.pathname === item.href ||
+            (item.href !== '/' && page.url.pathname.startsWith(item.href + '/'))}
           <a
             href={item.href}
             aria-current={active ? 'page' : undefined}
