@@ -167,8 +167,8 @@
         <p class="text-[12px] text-muted-foreground leading-relaxed">
           Dasbor ini menampilkan angka konsolidasi seluruh grup. Akses Anda terbatas pada entitas
           sendiri, dan total grup yang dihitung dari sebagian entitas bukan versi kecil dari angka
-          sebenarnya — itu angka yang berbeda. Layar Input Laporan untuk entitas Anda belum
-          dibuat; sampai layar itu ada, tidak ada halaman di portal ini yang bisa Anda buka.
+          sebenarnya — itu angka yang berbeda. Layar yang Anda perlukan adalah
+          <a href="/entry" class="text-primary hover:underline">Input Laporan</a>.
         </p>
       </div>
     </div>
