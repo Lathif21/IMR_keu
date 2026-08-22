@@ -21,10 +21,17 @@ The parts of the system where being wrong produces a wrong financial report:
 | [6](#part-6--dashboard-correctness) | Dasbor figures, banners, MoM comparability |
 | [7](#part-7--number-formatting) | Rupiah, parentheses, em dash, minus sign |
 
+The write path — filling a report in, submitting it, sending it back, approving,
+locking, unlocking — is a companion file:
+[`TESTING-WORKFLOW.md`](TESTING-WORKFLOW.md). This file probes invariants one at
+a time; that one walks a period through its whole life. Run both.
+
 ## What it does not cover
 
-- **The three unbuilt screens.** Laporan P&L, Input Laporan and Persetujuan do
-  not exist yet; their nav items render disabled. Nothing to test.
+- **The two write screens.** Input Laporan and Persetujuan are built, and
+  walking a report through them end to end lives in
+  [`TESTING-WORKFLOW.md`](TESTING-WORKFLOW.md). Laporan P&L does not exist yet;
+  its nav item renders disabled. Nothing to test there.
 - **Browser rendering.** Every check below reads server-rendered HTML with
   `curl`. Layout, focus order, and keyboard behaviour need a real browser.
 - **Whether the numbers are the client's real numbers.** They are not — see
