@@ -8,7 +8,18 @@ saved, submitted, sent back, fixed, approved, locked, unlocked.
 Every command and every expected value below was executed against a freshly
 seeded database. Nothing here is written from memory.
 
-There is still no test runner. This is a checklist.
+Run the automated suite first:
+
+```sh
+npm test
+```
+
+It covers the database underneath these screens — every status transition,
+both self-approval guards, the note requirement, the line-code guard, audit
+attribution and the number parser. What is left here is the part that has to go
+through the screens themselves: that the form actions exist, that a refusal
+reaches the user as a readable Indonesian sentence rather than a Postgres
+error, and that the page comes back showing the right state.
 
 ## What this covers
 
@@ -17,17 +28,23 @@ There is still no test runner. This is a checklist.
 | [Journey 1](#journey-1--an-entity-files-a-report) | `/entry` → `/entry/[period]`: create, fill, save, submit |
 | [Journey 2](#journey-2--the-reviewer-sends-it-back) | `/approval`: reject with a note, staff fixes, approve |
 | [Journey 3](#journey-3--lock-and-unlock) | Lock, refuse the unlock, unlock as direksi |
-| [Part D](#part-d--how-an-amount-is-parsed) | Indonesian number input, both separators, sign |
+| [Part D](#part-d--how-an-amount-is-parsed) | That the posted value reaches the column intact |
 | [Part E](#part-e--what-the-entry-screen-refuses) | Fake line codes, overflow, cross-entity, duplicates |
 | [Part F](#part-f--what-the-approval-screen-refuses) | Both self-approval paths, wrong role, silent refusals |
 | [Part G](#part-g--access-matrix) | Every role against every new route |
-| [Part H](#part-h--audit-trail-across-a-journey) | Actor attribution for each transition |
+| [Part H](#part-h--audit-trail-across-a-journey) | The journey, in order, with a name on every step |
 | [Part I](#part-i--browser-only-checks) | What `curl` cannot see |
+
+Parts E, F and H overlap the suite on purpose: the suite proves the trigger
+fires, and these prove the screen shows the person what it said.
 
 ## What it does not cover
 
-- **Anything in `TESTING.md`.** RLS isolation, the audit log's append-only
-  property, dashboard figures and number formatting live there. Run both.
+- **Anything `npm test` already asserts** about the database in isolation.
+  Trigger and policy behaviour lives in `tests/`; this file only checks how
+  the two write screens present it.
+- **Anything in `TESTING.md`.** Session handling and dashboard figures live
+  there. Run both.
 - **Browser behaviour**, except as listed in [Part I](#part-i--browser-only-checks).
   Everything else reads server-rendered HTML with `curl`.
 - **Concurrency.** Two reviewers acting on one period at the same time is
@@ -551,44 +568,26 @@ entirely — the round trip is closed.
 
 ## Part D — how an amount is parsed
 
-Rupiah amounts are whole, and Indonesian input mixes `.` as the thousands
-separator with `,` as the decimal. One parser handles both the browser field
-and the posted form value, because the value that arrives is whatever the field
-held — raw digits, or an already-formatted string.
+The parser itself — every separator, the dropped decimal, the accounting
+parentheses, the empty-means-zero rule — is `tests/format.test.ts`. Eleven
+inputs, asserted in milliseconds, no database involved.
 
-Drive it through the real action, one line at a time:
+What stays here is the one thing that file cannot see: that the value the
+action parses is the value the column receives.
 
 ```sh
-for v in "1500000" "1.500.000" "1.500.000,00" "1500000,00" "1,500,000" \
-         "Rp 1.500.000" "abc" "" "-2178807" "(2.178.807)" "1500000,5"; do
-  post staf.ilj "/entry/2025-08?/saveDraft" \
-    --data-urlencode "entitas=ILJ" --data-urlencode "amount__OTH_INCOME=$v" >/dev/null
-  printf '  %-16s -> %s\n' "\"$v\"" "$(psql_ -qAt -c "select coalesce((select amount::bigint
-    from report_lines where line_code='OTH_INCOME' and period_id='$AUG'),0);")"
-done
+post staf.ilj "/entry/2025-08?/saveDraft"   --data-urlencode "entitas=ILJ" --data-urlencode "amount__OTH_INCOME=1.500.000,00" >/dev/null
+
+psql_ -qAt -c "select amount::bigint from report_lines
+               where line_code='OTH_INCOME' and period_id='$AUG';"
 ```
 
-| Input | Stored | Why |
-|---|---:|---|
-| `1500000` | 1500000 | plain digits |
-| `1.500.000` | 1500000 | dots are thousands separators |
-| `1.500.000,00` | 1500000 | decimals dropped, **not** appended |
-| `1500000,00` | 1500000 | same, without grouping |
-| `1,500,000` | 1500000 | a US-style paste is still 1,5 juta |
-| `Rp 1.500.000` | 1500000 | a pasted label is not a digit |
-| `abc` | 0 | nothing numeric |
-| *(empty)* | 0 | blank means nothing this month, and `amount` is NOT NULL |
-| `-2178807` | −2178807 | leading minus |
-| `(2.178.807)` | −2178807 | the accounting form `formatAmount` emits, so it round-trips |
-| `1500000,5` | 1500000 | one decimal digit, still dropped |
+Expect `1500000`.
 
-The third row is the one to watch. Stripping every non-digit would make
-`1.500.000,00` into **150000000** — a hundredfold overstatement that looks like
-a plausible figure. A trailing `,dd` group is removed before the separators are.
-If that row ever reads 150000000, stop and fix it before anything else.
-
-A comma is only a decimal point when one or two digits follow it at the end.
-That is what keeps `1,500,000` from reading as fifteen hundred.
+If it ever reads `150000000`, stop and fix that before anything else: stripping
+every non-digit turns `1.500.000,00` into a hundredfold overstatement that
+still looks like a plausible figure. `tests/format.test.ts` guards the parser;
+this line guards the wiring between the form field and the column.
 
 ---
 
@@ -758,28 +757,59 @@ psql_ -qAt -c "select status from periods where id='d0000000-0000-4000-a000-0000
 ## Part G — access matrix
 
 ```sh
+ILJ=$(psql_ -qAt -c "select id from entities where code='ILJ';")
+TAM=$(psql_ -qAt -c "select id from entities where code='TAMBANG';")
+
 for u in staf.ilj manajer direksi auditor; do
-  printf '%-10s /entry:%-24s /entry/2025-07:%-6s /approval:%s\n' "$u" \
-    "$(code $u /entry)" "$(code $u /entry/2025-07)" "$(code $u /approval)"
+  printf '%-10s /entry:%-22s /approval:%-4s /entities:%-4s own:%-4s other:%s\n' "$u" \
+    "$(code $u /entry)" "$(code $u /approval)" "$(code $u /entities)" \
+    "$(code $u /entities/$ILJ/periods/2025-07)" \
+    "$(code $u /entities/$TAM/periods/2025-07)"
 done
 ```
 
-| Role | `/entry` | `/entry/2025-07` | `/approval` | Nav items shown |
-|---|---|---|---|---|
-| `staf_entitas` | 200 | 200 | **303 → `/`** | Input Laporan |
-| `manajer_keuangan` | 200 *(refusal panel)* | **403** | 200 | Persetujuan |
-| `direksi` | 200 *(refusal panel)* | **403** | 200 | Persetujuan |
-| `auditor` | 200 *(refusal panel)* | **403** | 200 *(read-only)* | *(none)* |
+| Role | `/entry` | `/entry/2025-07` | `/approval` | `/entities` | ILJ P&L | TAMBANG P&L | Nav items shown |
+|---|---|---|---|---|---|---|---|
+| `staf_entitas` | 200 | 200 | **303 → `/`** | 200 *(one card)* | 200 | **404** | Laporan P&L, Input Laporan |
+| `manajer_keuangan` | 200 *(refusal panel)* | **403** | 200 | 200 | 200 | 200 | Dasbor, Laporan P&L, Persetujuan |
+| `direksi` | 200 *(refusal panel)* | **403** | 200 | 200 | 200 | 200 | Dasbor, Laporan P&L, Persetujuan |
+| `auditor` | 200 *(refusal panel)* | **403** | 200 *(read-only)* | 200 | 200 | 200 | Dasbor, Laporan P&L |
+
+The P&L screen has no role check of its own — RLS decides, and an entity the
+caller may not read comes back as zero rows. That has to be a **404**, not an
+empty page: an empty page tells a staff member the report is missing when it
+is only invisible to them. `/entities` needs no such handling; the staff card
+list simply has one entry, which is correct and needs no explanation on screen.
+
+The P&L page carries no form and no button except the sidebar's logout, for
+every role including direksi. It is read-only by construction, not by a
+disabled attribute:
+
+```sh
+get auditor "/entities/$ILJ/periods/2025-07" | grep -o '<form[^>]*action="[^"]*"'
+#  <form method="POST" action="/logout"
+```
+
+A malformed entity id or month is a 404 too, not a 500 describing a failed
+type cast:
+
+```sh
+code auditor /entities/not-a-uuid/periods/2025-07   #  404
+code auditor "/entities/$ILJ/periods/2025-13"       #  404
+code auditor "/entities/$ILJ/periods/2020-01"       #  404  — no such period
+```
 
 Unauthenticated, every one of them redirects with the target preserved:
 
 ```sh
-for p in /entry /entry/2025-07 /approval; do
+for p in /entry /entry/2025-07 /approval /entities "/entities/$ILJ/periods/2025-07"; do
   curl -s -o /dev/null -w "$p  %{http_code} %{redirect_url}\n" "$APP$p"
 done
 #  /entry           303  …/login?redirectTo=%2Fentry
 #  /entry/2025-07   303  …/login?redirectTo=%2Fentry%2F2025-07
 #  /approval        303  …/login?redirectTo=%2Fapproval
+#  /entities        303  …/login?redirectTo=%2Fentities
+#  /entities/…      303  …/login?redirectTo=%2Fentities%2F…%2Fperiods%2F2025-07
 ```
 
 Two asymmetries in that table are intentional, and one is a gap — see
@@ -789,8 +819,11 @@ Two asymmetries in that table are intentional, and one is a gap — see
 
 ## Part H — audit trail across a journey
 
-Invariant 4: the trail is written by triggers, and every actor is named. Run
-Journeys 1–3 end to end, then:
+That the trail is append-only, and that each write carries an `actor_id`, is
+`tests/guards.test.ts`. What that cannot show is the shape of a whole journey
+across the two screens, in order, with a name against every step.
+
+Run Journeys 1–3 end to end, then:
 
 ```sh
 psql_ -qAt -c "select coalesce(p.full_name,'(none)') || ' : ' ||
@@ -801,7 +834,7 @@ psql_ -qAt -c "select coalesce(p.full_name,'(none)') || ' : ' ||
   order by a.occurred_at;"
 ```
 
-Expect the journey, in order, with a name against every step:
+Expect exactly this, in this order:
 
 ```
 Akun Dev C : draft -> submitted
@@ -812,28 +845,9 @@ Akun Dev B : approved -> locked
 Akun Dev A : locked -> draft
 ```
 
-Nothing the app writes may be anonymous:
-
-```sh
-psql_ -qAt -c "select count(*) from audit_log
-               where actor_id is null and table_name in ('periods','report_lines');"
-```
-
-Expect `0`. A NULL actor here means a write reached the database outside a user
-session — a service-role key in application code, or a migration doing data
-work. Both are defects.
-
-Line edits are attributed too:
-
-```sh
-psql_ -qAt -c "select coalesce(p.full_name,'(none)'), a.action, count(*)
-  from audit_log a left join profiles p on p.id=a.actor_id
-  where a.table_name='report_lines' group by 1,2 order by 1,2;"
-```
-
-Every row should name the staff account that made the edit, across INSERT,
-UPDATE and DELETE. The seed's own 32 line inserts are attributed as well — it
-runs under impersonated JWTs rather than bypassing the guards.
+A missing line means a transition happened without being recorded. A `(none)`
+means a write reached the database outside a user session — a service-role key
+in application code, or a migration doing data work. Both are defects.
 
 ---
 
@@ -893,15 +907,17 @@ a decision worth revisiting.
 Before committing anything that touches these two screens:
 
 ```sh
-npm run check                     # 0 errors, 0 warnings
 npm run db:reset
+npm test                          # the database layer, in under 5 seconds
+npm run check                     # 0 errors, 0 warnings
 npm run dev
 # then Journeys 1-3 in order, then Part D, then Part G
 ```
 
-Journeys 1–3 exercise every status transition, both guards on self-approval,
-the note requirement in both directions, and the consolidation round trip.
-Part D is the one place a silent hundredfold error can enter. Part G is three
-lines and catches a broken route guard immediately.
+`npm test` covers the guards themselves, so what is left by hand is short.
+Journeys 1–3 walk a period through every screen state and prove each refusal
+reaches the user as a sentence. Part D is the one place a silent hundredfold
+error can enter between the field and the column. Part G is three lines and
+catches a broken route guard immediately.
 
 Then run [`TESTING.md`'s regression checklist](TESTING.md#regression-checklist).
