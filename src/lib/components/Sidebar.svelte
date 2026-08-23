@@ -31,7 +31,7 @@
       href: '/',
       visible: canReadAllEntities(role)
     },
-    { label: 'Laporan P&L', icon: FileText, href: null, visible: true },
+    { label: 'Laporan P&L', icon: FileText, href: '/entities', visible: true },
     { label: 'Input Laporan', icon: ClipboardList, href: '/entry', visible: canEnterReports(role) },
     { label: 'Persetujuan', icon: CircleCheckBig, href: '/approval', visible: canApprove(role) }
   ]);

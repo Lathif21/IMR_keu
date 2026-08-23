@@ -1,37 +1,44 @@
 # End-to-end testing
 
-Manual end-to-end checks for the portal, run against the local Supabase stack.
-Every command and every expected value in this file was executed against a
-freshly seeded database — nothing here is written from memory.
+What is left to check by hand, after `npm test`.
 
-There is no test runner installed. This is a checklist, not a suite. See
-[If you automate this](#if-you-automate-this) at the end.
+Most of what this file used to hold is now automated — RLS isolation, the
+workflow triggers, the data-integrity guards, the audit trail and the number
+formatting all live in `tests/`. Run that first:
+
+```sh
+npm test
+```
+
+Everything below is the remainder: checks that need a rendered page, a real
+cookie jar, or a human deciding whether a screen reads correctly.
 
 ## What this covers
 
-The parts of the system where being wrong produces a wrong financial report:
+| Part | Area | Why it stays manual |
+|---|---|---|
+| [1](#part-1--authentication-and-session) | Login, session, logout, redirect handling | Cookies, redirects and an open-redirect regression. HTTP-level, but outside what the suite drives. |
+| [6](#part-6--dashboard-correctness) | Dasbor figures, banners, MoM comparability | Reads rendered HTML. Whether a banner is present and says the right thing is a judgement call. |
 
-| Part | Area |
+Automated instead, in `tests/`:
+
+| File | Covers | Was |
+|---|---|---|
+| `rls.test.ts` | Isolation per role, inactive profiles | Part 2 |
+| `workflow.test.ts` | Status transitions, segregation of duties, locking | Part 3 |
+| `guards.test.ts` | Line codes, period insert, audit immutability | Parts 4–5 |
+| `views.test.ts` | View arithmetic, elimination, completeness | Part 4 |
+| `format.test.ts` | Rupiah, parentheses, em dash, minus sign | Part 7 |
+
+Two companion files carry the rest:
+
+| File | Covers |
 |---|---|
-| [1](#part-1--authentication-and-session) | Login, session, logout, redirect handling |
-| [2](#part-2--rls-who-can-see-what) | RLS isolation per role |
-| [3](#part-3--workflow-guards) | Draft-only edits, segregation of duties, status transitions |
-| [4](#part-4--data-integrity-guards) | Line codes, completeness, elimination timing |
-| [5](#part-5--audit-trail) | Append-only audit log and actor attribution |
-| [6](#part-6--dashboard-correctness) | Dasbor figures, banners, MoM comparability |
-| [7](#part-7--number-formatting) | Rupiah, parentheses, em dash, minus sign |
-
-The write path — filling a report in, submitting it, sending it back, approving,
-locking, unlocking — is a companion file:
-[`TESTING-WORKFLOW.md`](TESTING-WORKFLOW.md). This file probes invariants one at
-a time; that one walks a period through its whole life. Run both.
+| [`TESTING-WORKFLOW.md`](TESTING-WORKFLOW.md) | The write path — filling a report in, submitting, sending it back, approving, locking, unlocking |
+| [`TESTING-PHASE2.md`](TESTING-PHASE2.md) | The read path — Laporan P&L, isolation between entities, and the ILJ import |
 
 ## What it does not cover
 
-- **The two write screens.** Input Laporan and Persetujuan are built, and
-  walking a report through them end to end lives in
-  [`TESTING-WORKFLOW.md`](TESTING-WORKFLOW.md). Laporan P&L does not exist yet;
-  its nav item renders disabled. Nothing to test there.
 - **Browser rendering.** Every check below reads server-rendered HTML with
   `curl`. Layout, focus order, and keyboard behaviour need a real browser.
 - **Whether the numbers are the client's real numbers.** They are not — see
@@ -285,316 +292,6 @@ a `GET` must never end a session, or any page could log the user out with an
 
 ---
 
-## Part 2 — RLS: who can see what
-
-Authorization lives in RLS, not in application code (invariant 1). These
-checks bypass the app entirely and talk to PostgREST, so they test the real
-boundary rather than the UI's opinion of it.
-
-### 2.1 Entity staff see one entity
-
-```sh
-ST=$(tok staf.ilj)
-api "$ST" GET "entities?select=code"
-api "$ST" GET "v_period_pnl?select=entity_code,period"
-api "$ST" GET "report_lines?select=line_code" | python -c "import sys,json;print(len(json.load(sys.stdin)),'rows')"
-api "$ST" GET "audit_log?select=id" | python -c "import sys,json;print(len(json.load(sys.stdin)),'rows')"
-```
-
-| Query | Expected |
-|---|---|
-| `entities` | `[{"code":"ILJ"}]` only |
-| `v_period_pnl` | ILJ 2025-06 and ILJ 2025-07 only |
-| `report_lines` | `24 rows` (ILJ's two months, 12 lines each) |
-| `audit_log` | `0 rows` — the log is for group-wide roles |
-
-### 2.2 Auditor reads everything and writes nothing
-
-```sh
-AU=$(tok auditor)
-api "$AU" GET "entities?select=code"                 # all four
-api "$AU" GET "audit_log?select=id" | python -c "import sys,json;print(len(json.load(sys.stdin)),'rows')"
-api "$AU" POST "periods" '{"entity_id":"e0000000-0000-4000-a000-000000000004","period":"2025-09-01","template_id":"11111111-1111-1111-1111-111111111111","status":"draft"}'
-```
-
-Expect all four entities, a non-zero audit log, and `42501 ... row-level
-security policy for table "periods"` on the write.
-
-To prove the auditor cannot write a *line*, they need a draft period to aim
-at — otherwise the draft-only guard fires first and proves nothing:
-
-```sh
-MG=$(tok manajer)
-PID=$(api "$MG" POST "periods" '{"entity_id":"e0000000-0000-4000-a000-000000000004","period":"2025-08-01","template_id":"11111111-1111-1111-1111-111111111111","status":"draft"}' \
-      | python -c "import sys,json;print(json.load(sys.stdin)[0]['id'])")
-api "$AU" POST "report_lines" "{\"period_id\":\"$PID\",\"line_code\":\"REV_TAGIHAN\",\"amount\":1}"
-```
-
-Expect `42501 ... row-level security policy for table "report_lines"`. Then
-`npm run db:reset`.
-
-### 2.3 Nobody gets in without logging in
-
-```sh
-curl -s "http://127.0.0.1:54321/rest/v1/entities?select=code" -H "apikey: $ANON"
-```
-
-Expect `permission denied for table entities`. The `anon` role is granted
-nothing at all — the whole portal requires a session.
-
-### 2.4 The dashboard refuses entity staff rather than showing them a partial group
-
-```sh
-login staf.ilj
-curl -s -b "$CJ" http://localhost:5173/ | grep -c "Tidak tersedia untuk peran Anda"
-```
-
-Expect `1`. A group total read under entity-scoped RLS is not a smaller
-version of the real number — it is a different number. The screen must refuse
-rather than render one entity's revenue as the group's.
-
----
-
-## Part 3 — Workflow guards
-
-Invariants 5 and 6. Each of these was a live exploit before the guards were
-added, so each one is a regression test with a known failure mode.
-
-Run `npm run db:reset` first.
-
-```sh
-ST=$(tok staf.ilj); MG=$(tok manajer)
-STAF=a0000000-0000-4000-a000-000000000003
-MGR=a0000000-0000-4000-a000-000000000002
-ILJ_JUL=d0000000-0000-4000-a000-000000000002
-```
-
-### 3.1 A new period cannot be born approved
-
-```sh
-api "$ST" POST "periods" '{"entity_id":"e0000000-0000-4000-a000-000000000001","period":"2025-08-01","template_id":"11111111-1111-1111-1111-111111111111","status":"approved"}'
-```
-
-Expect `Periode baru harus berstatus draft, bukan approved`.
-
-**Failure mode if this regresses:** the transition guard only runs on UPDATE,
-so a direct INSERT skips the entire approval workflow. The period counts
-toward completeness with no lines in it, and the dashboard reports 4/4.
-
-### 3.2 Lines are only writable while the period is draft
-
-```sh
-api "$ST" POST "report_lines" "{\"period_id\":\"$ILJ_JUL\",\"line_code\":\"OPEX_ATK\",\"amount\":1}"
-```
-
-Expect `Baris laporan tidak dapat diubah: periode berstatus approved.
-Kembalikan ke draft terlebih dahulu.`
-
-### 3.3 Entity staff cannot un-approve their own period
-
-```sh
-api "$ST" PATCH "periods?id=eq.$ILJ_JUL" '{"status":"draft","rejection_note":"iseng"}'
-```
-
-Expect `Peran Anda tidak berwenang membatalkan persetujuan periode`.
-
-**Failure mode if this regresses:** reverting to draft removes the entity from
-consolidation and reopens `report_lines`. That silently changes the group
-total and is not a staff-level action.
-
-### 3.4 A submitter cannot approve their own submission — including by omission
-
-The subtle one. Set up a period the manager both submits and tries to
-approve:
-
-```sh
-PID=$(api "$MG" POST "periods" '{"entity_id":"e0000000-0000-4000-a000-000000000004","period":"2025-07-01","template_id":"11111111-1111-1111-1111-111111111111","status":"draft"}' \
-      | python -c "import sys,json;print(json.load(sys.stdin)[0]['id'])")
-api "$MG" PATCH "periods?id=eq.$PID" "{\"status\":\"submitted\",\"submitted_by\":\"$MGR\"}" > /dev/null
-
-api "$MG" PATCH "periods?id=eq.$PID" '{"status":"approved"}'                              # 1
-api "$MG" PATCH "periods?id=eq.$PID" "{\"status\":\"approved\",\"approved_by\":\"$MGR\"}"  # 2
-api "$MG" PATCH "periods?id=eq.$PID" '{"status":"approved","approved_by":"a0000000-0000-4000-a000-000000000001"}' # 3
-```
-
-| Attempt | Expected |
-|---|---|
-| 1 — `approved_by` omitted | `approved_by harus pengguna yang sedang masuk` |
-| 2 — `approved_by` = self | `Pengaju tidak dapat menyetujui submission-nya sendiri` |
-| 3 — `approved_by` = someone else | `approved_by harus pengguna yang sedang masuk` |
-
-**Failure mode if this regresses:** attempt 1 is the one that used to work.
-`new.approved_by = old.submitted_by` evaluates to NULL, not true, when
-`approved_by` is left out — so the comparison never ran and the check silently
-passed. Attempt 3 matters separately: without it, the audit trail can be
-filled in with a colleague's name.
-
-### 3.5 Every return to draft needs a note
-
-```sh
-api "$MG" PATCH "periods?id=eq.$ILJ_JUL" '{"status":"draft"}'
-```
-
-Expect `Pengembalian ke draft wajib disertai catatan alasan`. This covers
-`approved -> draft` and `locked -> draft`, not just rejection from
-`submitted` — reopening an already-approved period needs a written reason more,
-not less.
-
-### 3.6 The happy path still works
-
-Guards that block legitimate work are as bad as missing guards.
-
-```sh
-npm run db:reset
-ST=$(tok staf.ilj); MG=$(tok manajer)
-AUG=$(api "$ST" POST "periods" '{"entity_id":"e0000000-0000-4000-a000-000000000001","period":"2025-08-01","template_id":"11111111-1111-1111-1111-111111111111","status":"draft"}' \
-      | python -c "import sys,json;print(json.load(sys.stdin)[0]['id'])")
-api "$ST" POST "report_lines" "{\"period_id\":\"$AUG\",\"line_code\":\"REV_TAGIHAN\",\"amount\":250000000}" > /dev/null
-api "$ST" PATCH "periods?id=eq.$AUG" "{\"status\":\"submitted\",\"submitted_by\":\"$STAF\"}" > /dev/null
-api "$MG" PATCH "periods?id=eq.$AUG" "{\"status\":\"approved\",\"approved_by\":\"$MGR\"}" > /dev/null
-api "$MG" GET "periods?id=eq.$AUG&select=status,submitted_by,approved_by"
-```
-
-Expect `status: approved`, `submitted_by` the staff account, `approved_by` the
-manager. Then `npm run db:reset`.
-
----
-
-## Part 4 — Data integrity guards
-
-### 4.1 A mistyped line code is rejected, not silently dropped
-
-Needs a draft period, since the draft-only guard fires first:
-
-```sh
-npm run db:reset
-MG=$(tok manajer)
-PID=$(api "$MG" POST "periods" '{"entity_id":"e0000000-0000-4000-a000-000000000004","period":"2025-08-01","template_id":"11111111-1111-1111-1111-111111111111","status":"draft"}' \
-      | python -c "import sys,json;print(json.load(sys.stdin)[0]['id'])")
-api "$MG" POST "report_lines" "{\"period_id\":\"$PID\",\"line_code\":\"REV_TYPO\",\"amount\":999}"
-api "$MG" POST "report_lines" "{\"period_id\":\"$PID\",\"line_code\":\"REV_TAGIHAN\",\"amount\":50000000}"
-```
-
-Expect `Kode baris REV_TYPO tidak ada (atau tidak aktif) pada template periode
-ini` for the first, and a created row for the second.
-
-**Failure mode if this regresses:** `v_period_pnl` sums through a join to
-`report_template_lines`. A code with no match joins to NULL and is therefore
-excluded from *every* `filter (where tl.section = ...)`. The amount disappears
-from revenue, costs and net profit at once, with no error — the statement stays
-internally consistent and is wrong. One typo, silently wrong report.
-
-Then `npm run db:reset`.
-
-### 4.2 A deactivated entity leaves both sides of the completeness count
-
-```sh
-psql_ -c "update entities set is_active=false where code='TAMBANG';"
-psql_ -c "select period, expected_entities, reported_entities, is_complete, missing_entities from v_period_completeness order by period;"
-psql_ -c "update entities set is_active=true where code='TAMBANG';"
-```
-
-Expect `expected_entities = 3` and `reported_entities = 1` for both periods,
-with TAMBANG absent from `missing_entities`.
-
-**Failure mode if this regresses:** if only `expected` is filtered by
-`is_active`, a deactivated entity with approved periods still counts as having
-reported. `reported` can then exceed `expected`, `is_complete` is false
-forever, and the KPI tile renders `-1 belum lapor`.
-
-### 4.3 Elimination waits for both sides
-
-The registry ships empty (A-5), so this needs a transaction created by hand.
-Record one where the buyer's period is not approved:
-
-```sh
-npm run db:reset
-psql_ -c "insert into intercompany_transactions (period, seller_entity_id, buyer_entity_id, amount, description) values ('2025-07-01', 'e0000000-0000-4000-a000-000000000001', 'e0000000-0000-4000-a000-000000000002', 10000000, 'uji A-10');"
-psql_ -c "select period, revenue_sum, elimination, revenue_consolidated from v_group_consolidated order by period;"
-```
-
-Expect `elimination = 0` for 2025-07: ILJ (seller) is approved but AMDK
-(buyer) is only `submitted`, so its revenue was never added to `revenue_sum`
-and there is nothing to eliminate against. `revenue_consolidated` stays
-331.400.000.
-
-**Failure mode if this regresses:** eliminating unconditionally subtracts
-10.000.000 from a sum that never included it, and consolidated revenue comes
-out too low. Recorded as A-10 in `ASSUMPTIONS.md`.
-
-Now the control — the elimination must actually *apply* once both sides are
-in, or this test would pass just as well with the feature broken:
-
-```sh
-psql_ -c "set local request.jwt.claims = '{\"sub\":\"a0000000-0000-4000-a000-000000000002\",\"role\":\"authenticated\"}';
-          update periods set status='approved', approved_by='a0000000-0000-4000-a000-000000000002'
-          where id='d0000000-0000-4000-a000-000000000004';"
-psql_ -c "select period, revenue_sum, elimination, revenue_consolidated from v_group_consolidated order by period;"
-```
-
-Expect 2025-07 to become `444.150.000 / 10.000.000 / 434.150.000`: AMDK's
-112.750.000 joins the sum, and the intercompany 10.000.000 is now eliminated
-from it. The `set local` is needed because the approval triggers resolve
-`auth.uid()` — a bare `update` as postgres is refused by `can_approve()`.
-
-Then `npm run db:reset`.
-
----
-
-## Part 5 — Audit trail
-
-The log is written by database triggers, never by application code
-(invariant 4).
-
-### 5.1 The log is append-only, even for the superuser
-
-```sh
-psql_ -c "update audit_log set action='TAMPERED' where true;"
-psql_ -c "delete from audit_log where true;"
-```
-
-Both expect `audit_log bersifat append-only dan tidak dapat diubah atau
-dihapus`. This runs as `postgres`, so RLS is not involved — the trigger is
-what holds. It cannot be bypassed through Supabase Studio or psql either.
-
-### 5.2 Composite-key tables are logged
-
-```sh
-psql_ -c "select table_name, record_pk, action from audit_log where table_name='user_entity_access';"
-```
-
-Expect one row with `record_pk` of the form `<user_id>:<entity_id>`.
-
-**Failure mode if this regresses:** `audit_log.record_pk` is NOT NULL, and
-`user_entity_access` has no `id` column — its key is `(user_id, entity_id)`. A
-version of `audit_row()` that only reads `id` makes `record_pk` NULL, the
-INSERT aborts, and the audit trigger takes the whole write down with it. The
-table becomes impossible to write to, which means entity staff can never be
-granted access to anything. This is what made the very first `db reset` fail.
-
-### 5.3 Actors are attributed
-
-```sh
-psql_ -c "select table_name, action, actor_id is not null as has_actor, count(*) from audit_log group by 1,2,3 order by 1,2;"
-```
-
-| Table | Action | `has_actor` |
-|---|---|---|
-| accounting_policies | INSERT | `f` |
-| entities | INSERT | `t` |
-| periods | INSERT | `t` |
-| periods | UPDATE | `t` |
-| report_lines | INSERT | `t` |
-| user_entity_access | INSERT | `t` |
-
-`accounting_policies` is the one exception and it is correct: those five rows
-are seeded by the *migration*, which runs with no JWT. The system created
-them, not a user. Everything written by `supabase/seed.sql` runs under an
-impersonated JWT, so it goes through the same guards the UI does and produces
-a realistic trail.
-
----
-
 ## Part 6 — Dashboard correctness
 
 ```sh
@@ -699,58 +396,37 @@ appears in this panel, it came from the prototype, not from a decision.
 
 ---
 
-## Part 7 — Number formatting
-
-Conventions from `src/app.css`. All visible in the July dashboard.
-
-| Rule | Correct | Wrong |
-|---|---|---|
-| Negatives in parentheses | `(4.606.807)` | `-4.606.807` |
-| Real minus in percentages | `−0,93%` (U+2212) | `-0,93%` (hyphen) |
-| No data is an em dash | `—` | `0`, blank |
-| Zero is a figure | `Rp 0` | `—` |
-| Indonesian grouping | `331.400.000` | `331,400,000` |
-| juta / miliar only in the view layer | `Rp 331,4 jt` | a `revenue_in_millions` column |
-| Figures are tabular and right-aligned | — | — |
-
-`—` and `0` mean different things and must never be interchanged: an entity
-that has not reported is not an entity that reported zero.
-
-Amounts are `numeric(18,2)` in full Rupiah. To confirm nothing has started
-storing millions:
-
-```sh
-psql_ -c "select column_name, data_type, numeric_precision, numeric_scale from information_schema.columns where table_name='report_lines' and column_name='amount';"
-```
-
-Expect `numeric`, precision 18, scale 2. `double precision` here would be a
-defect regardless of how the numbers happen to look.
-
----
-
 ## Regression checklist
 
-One line per invariant in `CLAUDE.md`. Run before committing anything that
-touches the schema or a view.
+Run before committing anything that touches the schema or a view.
 
 ```sh
+npm run db:reset   # applies cleanly, seed included
+npm test           # 112 assertions, under 5 seconds
 npm run check      # 0 errors, 0 warnings
 npm run build      # completes; adapter-auto warns about no platform, expected
-npm run db:reset   # applies cleanly, seed included
 ```
+
+`npm run db:reset` comes first and is not optional after a schema change: the
+suite resets its fixture by truncating and replaying `supabase/seed.sql`, which
+is fast but does not re-apply migrations.
+
+One line per invariant in `CLAUDE.md`:
 
 | # | Invariant | Check |
 |---|---|---|
-| 1 | Authorization is RLS | [2.1](#21-entity-staff-see-one-entity)–[2.3](#23-nobody-gets-in-without-logging-in) |
-| 2 | No stored subtotals | `psql_ -c "\d report_lines"` shows no `gross_profit` / `net_profit` column |
-| 3 | `numeric(18,2)`, full Rupiah | [Part 7](#part-7--number-formatting) |
-| 4 | Audit trail written by triggers | [5.1](#51-the-log-is-append-only-even-for-the-superuser)–[5.3](#53-actors-are-attributed) |
-| 5 | Lines mutable only in draft | [3.2](#32-lines-are-only-writable-while-the-period-is-draft) |
-| 6 | No self-approval | [3.4](#34-a-submitter-cannot-approve-their-own-submission--including-by-omission) |
+| 1 | Authorization is RLS | `tests/rls.test.ts` |
+| 2 | No stored subtotals | `tests/views.test.ts`, plus `psql_ -c "\d report_lines"` showing no `gross_profit` / `net_profit` column |
+| 3 | `numeric(18,2)`, full Rupiah | `tests/format.test.ts` |
+| 4 | Audit trail written by triggers | `tests/guards.test.ts` |
+| 5 | Lines mutable only in draft | `tests/workflow.test.ts` |
+| 6 | No self-approval | `tests/workflow.test.ts` |
 | 7 | Templates are data | `psql_ -c "select count(*) from report_template_lines;"` → 16; no line labels in `src/` |
 | 8 | No invented policy | [6.5](#65-open-policies-are-surfaced-not-defaulted), [6.6](#66-alerts-derive-only-from-data-that-exists) |
 
-Every table must also have RLS enabled and at least one policy:
+Two structural checks the suite does not make, because they are about the
+schema rather than its behaviour. Every table must have RLS enabled and at
+least one policy:
 
 ```sh
 psql_ -t -A -c "
@@ -774,25 +450,3 @@ where n.nspname='public' and c.relkind in ('r','v')
 
 Expect no output. A table with policies but no `GRANT` fails every query with
 `42501` — policies narrow privileges, they never confer them.
-
----
-
-## If you automate this
-
-Not done, and not free. What it would cost:
-
-- **Parts 2–5** are HTTP and SQL assertions with no browser involved. They are
-  the highest value and the cheapest to automate — a `node --test` file plus
-  the `tok`/`api` helpers above would cover them, with no new dependency
-  beyond what is installed.
-- **Parts 1, 6 and 7** read rendered HTML. Automating them properly means
-  Playwright, which is a real dependency and a real CI cost. The `text()`
-  helper above is enough to assert on server-rendered strings without it,
-  which covers most of the value.
-- **Isolation** is the actual problem. Every part above mutates the database
-  and assumes a fresh seed. `supabase db reset` takes several seconds, so a
-  per-test reset is too slow; tests would need to run inside a transaction
-  that rolls back, or each own its own period so they cannot collide.
-
-Until then: run the parts you touched, and the [regression
-checklist](#regression-checklist) before you commit.
