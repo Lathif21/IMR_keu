@@ -12,6 +12,7 @@ Read these before writing code:
 | [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) | Accounting policies that are still undecided. The system surfaces them; it never picks a default. |
 | [docs/TESTING.md](docs/TESTING.md) | What is still checked by hand, after `npm test`: session handling and the dashboard. |
 | [docs/TESTING-WORKFLOW.md](docs/TESTING-WORKFLOW.md) | The two write screens, walked end to end. |
+| [docs/TESTING-PHASE2.md](docs/TESTING-PHASE2.md) | Fase 2 on screen: the P&L report, entity isolation, and the ILJ import. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What exists, what does not, and what comes next. |
 
 ## Stack

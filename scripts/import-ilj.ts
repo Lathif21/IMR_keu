@@ -852,9 +852,12 @@ export function buildSql(
   push(`--  Source : ${sourceFile}`);
   push('--');
   push('--  Local development data. Never run against production.');
-  push('--  Apply after `npm run db:reset`:');
-  push('--    psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \\');
-  push('--         -v ON_ERROR_STOP=1 -f supabase/seed-ilj.sql');
+  push('--  Apply after `npm run db:reset`. With psql on PATH:');
+  push('--    psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/seed-ilj.sql');
+  push('--  Without it — the Supabase CLI does not install one — go through');
+  push('--  the container. `-i` matters: the file is on the host, not inside.');
+  push('--    docker exec -i supabase_db_IMR_keu psql -U postgres -d postgres \\');
+  push('--      -v ON_ERROR_STOP=1 -f - < supabase/seed-ilj.sql');
   push('--');
   push('--  PARSING REPORT');
   for (const line of reportText.split('\n')) push(`--  ${line}`.trimEnd());

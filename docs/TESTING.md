@@ -30,9 +30,12 @@ Automated instead, in `tests/`:
 | `views.test.ts` | View arithmetic, elimination, completeness | Part 4 |
 | `format.test.ts` | Rupiah, parentheses, em dash, minus sign | Part 7 |
 
-The write path — filling a report in, submitting it, sending it back,
-approving, locking, unlocking — is a companion file:
-[`TESTING-WORKFLOW.md`](TESTING-WORKFLOW.md).
+Two companion files carry the rest:
+
+| File | Covers |
+|---|---|
+| [`TESTING-WORKFLOW.md`](TESTING-WORKFLOW.md) | The write path — filling a report in, submitting, sending it back, approving, locking, unlocking |
+| [`TESTING-PHASE2.md`](TESTING-PHASE2.md) | The read path — Laporan P&L, isolation between entities, and the ILJ import |
 
 ## What it does not cover
 

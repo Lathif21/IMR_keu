@@ -45,6 +45,8 @@ fires, and these prove the screen shows the person what it said.
   the two write screens present it.
 - **Anything in `TESTING.md`.** Session handling and dashboard figures live
   there. Run both.
+- **The read path.** Laporan P&L and the ILJ import are
+  [`TESTING-PHASE2.md`](TESTING-PHASE2.md).
 - **Browser behaviour**, except as listed in [Part I](#part-i--browser-only-checks).
   Everything else reads server-rendered HTML with `curl`.
 - **Concurrency.** Two reviewers acting on one period at the same time is
