@@ -12,7 +12,7 @@
     type LineSection
   } from '$lib/domain';
   import { formatAmount, formatPeriod, parseAmountInput, toAmount } from '$lib/format';
-  import type { ActionData, PageData } from './$types';
+  import type { ActionData, PageData, SubmitFunction } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -188,6 +188,28 @@
   }
 
   /**
+   * Saving must not blank the form.
+   *
+   * `use:enhance` with no argument calls `HTMLFormElement.reset()` after a
+   * successful action, which returns every control to its `value` *attribute*.
+   * Svelte drives these fields through the value *property*, so the attribute
+   * is empty and the entire amount column went blank the moment Simpan Draft
+   * succeeded — while `amounts` still held the figures. Focusing a field
+   * re-rendered its value expression and the number reappeared, which is what
+   * the bug looked like from the outside: the data was never lost, only the
+   * DOM and the state had stopped agreeing.
+   *
+   * Resetting is right for a form you submit and walk away from. This one is
+   * an editing surface the user stays on, so it keeps its values and only the
+   * saved-confirmation banner changes.
+   */
+  const keepValuesAfterSave: SubmitFunction = () => {
+    return async ({ update }) => {
+      await update({ reset: false });
+    };
+  };
+
+  /**
    * A month of nothing but zeros is almost certainly a mistake, but it is not
    * impossible — an entity that did not operate has a real all-zero month. So
    * it asks, and takes yes for an answer (invariant 8: surface the doubt,
@@ -272,7 +294,11 @@
     </div>
   {/if}
 
-  <form method="POST" class="flex-1 flex flex-col overflow-hidden" use:enhance>
+  <form
+    method="POST"
+    class="flex-1 flex flex-col overflow-hidden"
+    use:enhance={keepValuesAfterSave}
+  >
     <input type="hidden" name="entitas" value={data.selected.code} />
 
     <div class="flex-1 overflow-y-auto">
