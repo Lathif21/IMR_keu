@@ -47,7 +47,8 @@
             this={href ? 'a' : 'div'}
             href={href ?? undefined}
             class="block bg-card border border-border rounded-lg p-4 transition-colors
-                   {href ? 'hover:border-border-strong' : ''}"
+                   {href ? 'hover:border-border-strong' : ''}
+                   {card.entity.is_active ? '' : 'opacity-60'}"
           >
             <div class="flex items-start justify-between gap-3 mb-3">
               <div class="flex items-center gap-2.5 min-w-0">
@@ -77,6 +78,11 @@
               >
                 {card.entity.business_line}
               </span>
+              <!-- An entity can be retired from reporting without its books
+                   being retired with it. -->
+              {#if !card.entity.is_active}
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-subtle">Nonaktif</span>
+              {/if}
               <!-- Reporting basis is on the card, not only inside the report.
                    Two entities on different bases are not comparable, and this
                    screen is the one that puts them side by side (CONTEXT.md). -->

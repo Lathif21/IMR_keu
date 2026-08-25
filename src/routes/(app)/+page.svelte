@@ -155,10 +155,10 @@
 
 {#if data.scoped}
   <div class="flex flex-col h-full">
-    <div class="h-12 flex items-center px-5 border-b border-border shrink-0">
+    <div class="h-12 flex items-center px-4 sm:px-5 border-b border-border shrink-0">
       <h1 class="text-[13px] font-semibold text-foreground">Dasbor Eksekutif</h1>
     </div>
-    <div class="flex-1 p-5">
+    <div class="flex-1 p-4 sm:p-5">
       <div class="max-w-[520px] bg-card border border-border rounded-lg p-5">
         <div class="flex items-center gap-2 mb-2">
           <Lock size={14} class="text-muted-foreground" />
@@ -175,10 +175,10 @@
   </div>
 {:else if !data.period}
   <div class="flex flex-col h-full">
-    <div class="h-12 flex items-center px-5 border-b border-border shrink-0">
+    <div class="h-12 flex items-center px-4 sm:px-5 border-b border-border shrink-0">
       <h1 class="text-[13px] font-semibold text-foreground">Dasbor Eksekutif</h1>
     </div>
-    <div class="flex-1 p-5">
+    <div class="flex-1 p-4 sm:p-5">
       <div class="max-w-[520px] bg-card border border-border rounded-lg p-5">
         <h2 class="text-[13px] font-semibold text-foreground mb-2">Belum ada periode</h2>
         <p class="text-[12px] text-muted-foreground leading-relaxed">
@@ -191,10 +191,14 @@
 {:else}
   <div class="flex flex-col h-full overflow-hidden">
     <!-- header · 48px -->
-    <div class="h-12 flex items-center justify-between px-5 border-b border-border shrink-0 gap-4">
+    <div class="h-12 flex items-center justify-between px-4 sm:px-5 border-b border-border shrink-0 gap-3">
       <div class="flex items-center gap-3 min-w-0">
-        <h1 class="text-[13px] font-semibold text-foreground shrink-0">Dasbor Eksekutif</h1>
-        <span class="text-[11px] text-muted-foreground truncate">Grup Holding · Konsolidasi</span>
+        <h1 class="text-[13px] font-semibold text-foreground truncate">Dasbor Eksekutif</h1>
+        <!-- The subtitle is the first thing to go: on a phone the period
+             picker beside it is what people came for. -->
+        <span class="text-[11px] text-muted-foreground truncate hidden sm:inline">
+          Grup Holding · Konsolidasi
+        </span>
       </div>
 
       <form method="GET" class="flex items-center gap-2 shrink-0">
@@ -223,7 +227,7 @@
       </form>
     </div>
 
-    <div class="flex-1 overflow-y-auto p-5 space-y-5">
+    <div class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 sm:space-y-5">
       <!-- Incompleteness is never silent. CLAUDE.md anti-pattern: showing
            consolidated totals without a banner when entities haven't reported. -->
       {#if data.completeness && !data.completeness.is_complete}
@@ -366,7 +370,7 @@
                     >
                       {item.entity.code}
                     </span>
-                    <span class="text-[11px] text-muted-foreground truncate">
+                    <span class="text-[11px] text-muted-foreground truncate hidden sm:inline">
                       {item.entity.legal_name}
                     </span>
                   </div>

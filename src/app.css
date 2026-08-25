@@ -45,6 +45,13 @@
   html {
     font-size: var(--text-base-size);
     font-family: "Inter", system-ui, sans-serif;
+
+    /* Native controls are painted by the browser, not by our tokens, and
+       without this they are painted for a light page: the month picker opens
+       as a white calendar, its indicator is a near-black glyph on a near-black
+       field, and every <select> drops open in white. One declaration fixes the
+       lot — the app is dark-only, so there is nothing to negotiate. */
+    color-scheme: dark;
   }
 
   body {

@@ -25,6 +25,8 @@ import {
 
 let staff: SupabaseClient;
 let service: SupabaseClient;
+let director: SupabaseClient;
+let manager: SupabaseClient;
 
 let ilj: string;
 let template: string;
@@ -46,6 +48,8 @@ beforeAll(async () => {
   });
 
   staff = await signIn('staf.ilj');
+  director = await signIn('direksi');
+  manager = await signIn('manajer');
   service = serviceClient();
 });
 
@@ -245,5 +249,309 @@ describe('audit_log', () => {
     // audit_row() learned to read a composite key out of the catalog.
     expect(rows.map((row) => row.record_pk)).toContain(`${staffId}:${amdk}`);
     expect(rows.every((row) => row.record_pk.includes(':'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fase 3 prasyarat — migrations/20250103000000_admin_prerequisites.sql
+// ---------------------------------------------------------------------------
+
+describe('basis pelaporan hanya berubah dengan alasan tertulis', () => {
+  /**
+   * Not a UI rule. RLS lets a director update `entities` by any route, so
+   * enforcing "must have a reason" in the screen alone would leave PostgREST
+   * wide open — invariant 1. The trigger is the boundary; the RPC is the only
+   * door through it.
+   */
+  it('menolak update kolom secara langsung, bahkan oleh direksi', async () => {
+    const { error } = await director
+      .from('entities')
+      .update({ reporting_basis: 'cash' })
+      .eq('id', ilj);
+
+    expect(error?.message).toContain('pencatatan kebijakan beralasan');
+
+    const [row] = await sql<{ reporting_basis: string }>(
+      'select reporting_basis from entities where id = $1',
+      [ilj]
+    );
+    expect(row.reporting_basis).toBe('unknown');
+  });
+
+  it('RPC menulis kebijakan dan nilai operasionalnya sekaligus', async () => {
+    const { error } = await director.rpc('set_entity_reporting_basis', {
+      p_entity_id: ilj,
+      p_basis: 'cash',
+      p_presentation: 'gross',
+      p_rationale: 'Konfirmasi akuntan: ILJ mencatat saat kas diterima.',
+      p_effective_from: '2025-01-01'
+    });
+    expect(error).toBeNull();
+
+    const [entity] = await sql<{ reporting_basis: string; revenue_presentation: string }>(
+      'select reporting_basis, revenue_presentation from entities where id = $1',
+      [ilj]
+    );
+    expect(entity.reporting_basis).toBe('cash');
+    expect(entity.revenue_presentation).toBe('gross');
+
+    // Two rows, because the two columns are two separate decisions that
+    // happen to be taken together.
+    const policies = await sql<{ policy_key: string; chosen_value: string; decided_by: string }>(
+      `select policy_key, chosen_value, decided_by from accounting_policies
+        where entity_id = $1 order by policy_key`,
+      [ilj]
+    );
+    expect(policies.map((p) => p.policy_key)).toEqual([
+      'reporting_basis',
+      'revenue_presentation'
+    ]);
+    expect(policies.map((p) => p.chosen_value)).toEqual(['cash', 'gross']);
+
+    // The name comes from the caller's profile, never from a parameter — a
+    // caller must not be able to sign someone else's name to a decision.
+    expect(new Set(policies.map((p) => p.decided_by))).toEqual(new Set(['Akun Dev A']));
+  });
+
+  it('menolak pemanggil yang bukan direksi', async () => {
+    const amdk = await entityId('AMDK');
+    const { error } = await manager.rpc('set_entity_reporting_basis', {
+      p_entity_id: amdk,
+      p_basis: 'accrual',
+      p_presentation: 'net',
+      p_rationale: 'Alasan yang cukup panjang untuk lolos pemeriksaan.',
+      p_effective_from: '2025-01-01'
+    });
+
+    expect(error?.message).toContain('Hanya direksi');
+    const [row] = await sql<{ reporting_basis: string }>(
+      'select reporting_basis from entities where id = $1',
+      [amdk]
+    );
+    expect(row.reporting_basis).toBe('unknown');
+  });
+
+  it('menolak alasan kosong, termasuk yang hanya spasi', async () => {
+    const amdk = await entityId('AMDK');
+    const { error } = await director.rpc('set_entity_reporting_basis', {
+      p_entity_id: amdk,
+      p_basis: 'accrual',
+      p_presentation: 'net',
+      p_rationale: '   ',
+      p_effective_from: '2025-01-01'
+    });
+
+    expect(error?.message).toContain('wajib disertai alasan');
+  });
+
+  it('menolak tanpa tanggal berlaku, dengan pesan yang terbaca', async () => {
+    // accounting_policies has a check constraint for this. Caught inside the
+    // function so the message names the field rather than the constraint.
+    const amdk = await entityId('AMDK');
+    const { error } = await director.rpc('set_entity_reporting_basis', {
+      p_entity_id: amdk,
+      p_basis: 'accrual',
+      p_presentation: 'net',
+      p_rationale: 'Alasan yang cukup panjang untuk lolos pemeriksaan.',
+      p_effective_from: null
+    });
+
+    expect(error?.message).toContain('tanggal mulai berlaku');
+  });
+
+  it('menolak penetapan kedua pada tanggal berlaku yang sama', async () => {
+    const { error } = await director.rpc('set_entity_reporting_basis', {
+      p_entity_id: ilj,
+      p_basis: 'accrual',
+      p_presentation: 'net',
+      p_rationale: 'Percobaan menimpa penetapan yang sudah ada.',
+      p_effective_from: '2025-01-01'
+    });
+
+    expect(error?.message).toContain('Sudah ada penetapan basis');
+
+    // The first decision stands.
+    const [row] = await sql<{ reporting_basis: string }>(
+      'select reporting_basis from entities where id = $1',
+      [ilj]
+    );
+    expect(row.reporting_basis).toBe('cash');
+  });
+});
+
+describe('sort_order deferrable', () => {
+  it('menukar dua baris dalam satu transaksi', async () => {
+    const before = await sql<{ line_code: string; sort_order: number }>(
+      `select line_code, sort_order from report_template_lines
+        where template_id = $1 and line_code in ('REV_TAGIHAN','REV_LAINNYA')
+        order by sort_order`,
+      [template]
+    );
+    expect(before.map((r) => r.line_code)).toEqual(['REV_TAGIHAN', 'REV_LAINNYA']);
+
+    /**
+     * Both rows briefly hold the same sort_order between these two
+     * statements. A non-deferrable unique constraint refuses exactly there,
+     * even though the end state is valid — which is why migration
+     * 20250103000000 made it `deferrable initially deferred`.
+     */
+    await sql('begin');
+    await sql(
+      "update report_template_lines set sort_order = 20 where template_id = $1 and line_code = 'REV_TAGIHAN'",
+      [template]
+    );
+    await sql(
+      "update report_template_lines set sort_order = 10 where template_id = $1 and line_code = 'REV_LAINNYA'",
+      [template]
+    );
+    await sql('commit');
+
+    const after = await sql<{ line_code: string; sort_order: number }>(
+      `select line_code, sort_order from report_template_lines
+        where template_id = $1 and line_code in ('REV_TAGIHAN','REV_LAINNYA')
+        order by sort_order`,
+      [template]
+    );
+    expect(after.map((r) => r.line_code)).toEqual(['REV_LAINNYA', 'REV_TAGIHAN']);
+  });
+
+  it('menukar lewat RPC, jalur yang dipakai layar template', async () => {
+    /**
+     * PostgREST gives every request its own transaction and cannot be asked
+     * to span two, so two sequential updates would each commit — and the
+     * first commit already holds a duplicate. `swap_template_line_order`
+     * supplies the single transaction the deferred constraint needs.
+     */
+    const rows = await sql<{ id: string; line_code: string }>(
+      `select id, line_code from report_template_lines
+        where template_id = $1 and line_code in ('OPEX_GAJI','OPEX_SEWA')
+        order by sort_order`,
+      [template]
+    );
+    expect(rows.map((r) => r.line_code)).toEqual(['OPEX_GAJI', 'OPEX_SEWA']);
+
+    const { error } = await director.rpc('swap_template_line_order', {
+      p_a: rows[0].id,
+      p_b: rows[1].id
+    });
+    expect(error).toBeNull();
+
+    const after = await sql<{ line_code: string }>(
+      `select line_code from report_template_lines
+        where template_id = $1 and line_code in ('OPEX_GAJI','OPEX_SEWA')
+        order by sort_order`,
+      [template]
+    );
+    expect(after.map((r) => r.line_code)).toEqual(['OPEX_SEWA', 'OPEX_GAJI']);
+  });
+
+  it('menolak menukar baris dari dua template berbeda', async () => {
+    const [other] = await sql<{ id: string }>(
+      `insert into report_templates (code, name, business_line, version)
+       values ('UJI_SWAP', 'Template uji', 'uji', 1) returning id`
+    );
+    const [otherLine] = await sql<{ id: string }>(
+      `insert into report_template_lines (template_id, line_code, line_label, section, sort_order)
+       values ($1, 'REV_UJI', 'Uji', 'revenue', 10) returning id`,
+      [other.id]
+    );
+    const [mine] = await sql<{ id: string }>(
+      "select id from report_template_lines where template_id = $1 and line_code = 'OPEX_GAJI'",
+      [template]
+    );
+
+    const { error } = await director.rpc('swap_template_line_order', {
+      p_a: mine.id,
+      p_b: otherLine.id
+    });
+    expect(error?.message).toContain('template yang sama');
+  });
+
+  it('menolak pemanggil yang tidak berhak menulis template', async () => {
+    // security invoker: the RPC does not lend its own rights to anyone. RLS
+    // filters the UPDATE to zero rows, so nothing moves.
+    const rows = await sql<{ id: string; line_code: string }>(
+      `select id, line_code from report_template_lines
+        where template_id = $1 and line_code in ('OPEX_GAJI','OPEX_SEWA')
+        order by sort_order`,
+      [template]
+    );
+
+    await staff.rpc('swap_template_line_order', { p_a: rows[0].id, p_b: rows[1].id });
+
+    const after = await sql<{ line_code: string }>(
+      `select line_code from report_template_lines
+        where template_id = $1 and line_code in ('OPEX_GAJI','OPEX_SEWA')
+        order by sort_order`,
+      [template]
+    );
+    expect(after.map((r) => r.line_code)).toEqual(rows.map((r) => r.line_code));
+  });
+});
+
+describe('audit untuk tabel yang punya layar admin', () => {
+  it('mencatat perubahan peran', async () => {
+    // Without this trigger, promoting someone to direksi left no trace at all.
+    const { error } = await director
+      .from('profiles')
+      .update({ role: 'auditor' })
+      .eq('id', staffId);
+    expect(error).toBeNull();
+
+    const rows = await sql<{ actor_id: string; old_role: string; new_role: string }>(
+      `select actor_id,
+              old_value ->> 'role' as old_role,
+              new_value ->> 'role' as new_role
+         from audit_log
+        where table_name = 'profiles' and action = 'UPDATE' and record_pk = $1`,
+      [staffId]
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].old_role).toBe('staf_entitas');
+    expect(rows[0].new_role).toBe('auditor');
+    expect(rows[0].actor_id).toBe(await userId('direksi'));
+  });
+
+  it('mencatat perubahan section sebuah baris template', async () => {
+    /**
+     * The change this exists to catch: `section` decides which bucket
+     * `v_period_pnl` sums a figure into, for every period that ever used the
+     * template — including locked ones. Gross profit across the whole history
+     * moves, and nothing raises.
+     */
+    const { error } = await director
+      .from('report_template_lines')
+      .update({ section: 'opex' })
+      .eq('template_id', template)
+      .eq('line_code', 'COGS_TERPAL');
+    expect(error).toBeNull();
+
+    const rows = await sql<{ old_section: string; new_section: string; actor_id: string }>(
+      `select old_value ->> 'section' as old_section,
+              new_value ->> 'section' as new_section,
+              actor_id
+         from audit_log
+        where table_name = 'report_template_lines' and action = 'UPDATE'
+          and old_value ->> 'line_code' = 'COGS_TERPAL'`
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].old_section).toBe('cogs');
+    expect(rows[0].new_section).toBe('opex');
+    expect(rows[0].actor_id).toBe(await userId('direksi'));
+  });
+
+  it('mencatat perubahan template itu sendiri', async () => {
+    const { error } = await director
+      .from('report_templates')
+      .update({ name: 'Laporan Laba Rugi — Jasa Angkutan (v1)' })
+      .eq('id', template);
+    expect(error).toBeNull();
+
+    const rows = await sql(
+      "select 1 from audit_log where table_name = 'report_templates' and action = 'UPDATE'"
+    );
+    expect(rows).toHaveLength(1);
   });
 });

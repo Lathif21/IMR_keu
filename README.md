@@ -13,6 +13,7 @@ Read these before writing code:
 | [docs/TESTING.md](docs/TESTING.md) | What is still checked by hand, after `npm test`: session handling and the dashboard. |
 | [docs/TESTING-WORKFLOW.md](docs/TESTING-WORKFLOW.md) | The two write screens, walked end to end. |
 | [docs/TESTING-PHASE2.md](docs/TESTING-PHASE2.md) | Fase 2 on screen: the P&L report, entity isolation, and the ILJ import. |
+| [docs/DATABASE.md](docs/DATABASE.md) | Inspecting the schema in DBeaver: tables, relations, triggers, and why RLS looks absent there. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What exists, what does not, and what comes next. |
 
 ## Stack
@@ -43,6 +44,41 @@ password `devpassword`:
 | `auditor@example.test` | auditor | everything, read-only |
 
 These exist only in a local database. They are not printed anywhere in the UI.
+
+## Security notes
+
+Deliberate limitations, not oversights. Each is a decision that can be revisited
+when the group is bigger than ten people.
+
+**Accounts are created by a director, password and all.** There is no SMTP
+configured, so `/admin/users` calls `createUser` with `email_confirm: true` —
+without it the account could never log in. The consequences, in full:
+
+- There is **no email verification**. An address is whatever the director typed.
+- There is **no self-service password reset**. A forgotten password means asking
+  a director to set a new one.
+- The director **knows every initial password**. The screen offers a random
+  generator and shows the result once, so nobody has to invent one, but the
+  password still passes through a human.
+
+Passwords are never written to a log, never stored in `audit_log`, never put in
+an error message, and never sent back to the browser after being set. Minimum
+length is checked on the server, not only in the form.
+
+**Email cannot be changed** once an account exists. `auth.admin.updateUserById`
+could do it, but changing someone's address without verification is how an
+account gets taken over. Deactivate and create a new one instead.
+
+**Nobody is ever deleted.** `audit_log.actor_id` points at profiles, and a
+history whose actors have vanished is not a history. Deactivating is the way
+out, and `current_user_role()` filters `is_active`, so a deactivated account
+loses everything immediately — even with a session still in flight.
+
+**The service role key is used by exactly one screen**, `/admin/users`, and only
+inside `+page.server.ts`. It is read through `$env/static/private` so SvelteKit
+refuses to bundle it into client code, and the client is built per request
+rather than kept as a module singleton. Verified after `npm run build`: the key
+appears in one server chunk and in zero of the client bundle's files.
 
 ## Scripts
 

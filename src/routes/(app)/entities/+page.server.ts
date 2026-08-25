@@ -12,6 +12,7 @@ interface EntityRow {
   theme_color: string;
   reporting_basis: ReportingBasis;
   revenue_presentation: RevenuePresentation;
+  is_active: boolean;
 }
 
 function fail(context: string, cause: PostgrestError): never {
@@ -30,9 +31,16 @@ export const load: PageServerLoad = async ({ locals }) => {
     locals.supabase
       .from('entities')
       .select(
-        'id, code, legal_name, business_line, icon_key, theme_color, reporting_basis, revenue_presentation'
+        'id, code, legal_name, business_line, icon_key, theme_color, reporting_basis, revenue_presentation, is_active'
       )
-      .eq('is_active', true)
+      /**
+       * Inactive entities are kept, unlike on the dashboard. Deactivating is
+       * how an entity stops being expected to report — it is not a way to
+       * retire its books. Filtering them out here would make a deactivated
+       * PT's whole financial history unreachable from the UI, which is
+       * exactly what an auditor would come looking for.
+       */
+      .order('is_active', { ascending: false })
       .order('code')
       .returns<EntityRow[]>(),
     /**

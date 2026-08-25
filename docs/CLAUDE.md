@@ -85,16 +85,55 @@ Five screens in the export, four of them real:
 | Laporan P&L | `/entities/[id]/periods/[period]` | Read-only statement, MoM comparison |
 | Input Laporan | `/entry/[period]` | Editable rows, locked subtotals, sticky totals footer |
 | Persetujuan | `/approval` | Queue with expandable review panel |
-| ~~Tampilan Mobile~~ | — | Prototype device-frame preview. Not a route. The real app is responsive. |
+| ~~Tampilan Mobile~~ | — | Prototype device-frame preview. Not a route. The real app is responsive down to 360px — verified, not assumed; see `TESTING.md` Part 7. |
+
+Three admin screens exist beyond the Figma export, all behind
+`/admin/+layout.server.ts` which redirects anyone who is not `direksi`:
+
+| Screen | Route | Notes |
+|---|---|---|
+| Entitas | `/admin/entities` | Create and edit entities; reporting basis is set through an RPC, never a column write |
+| Template | `/admin/templates` | Versioned; a template used by a non-draft period is frozen and must be duplicated |
+| Pengguna | `/admin/users` | The only screen holding the service role key |
+
+Two rules worth carrying in your head before touching them:
+
+- **`entities.reporting_basis` cannot be written directly.** A trigger refuses
+  it. `set_entity_reporting_basis()` writes the decision to
+  `accounting_policies` and the value to `entities` in one transaction, so the
+  reason and the figure can never drift apart.
+- **A template in use is immutable.** `v_period_pnl` resolves a figure's
+  section by joining to `report_template_lines`, so editing a line's section
+  moves historical amounts between buckets across every period that ever used
+  the template — locked ones included, silently. Duplicating to a new version
+  is the only way forward; old periods keep pointing at the old `template_id`.
 
 The export is React; this project is SvelteKit. Port screen by screen —
 do not vendor the `src/app/components/ui` directory. It ships 48 shadcn
 components plus MUI, react-slick, react-dnd and canvas-confetti; the four
 real screens use none of them. Add each component only when a screen needs it.
 
-Layout conventions worth preserving: 214px sidebar, 48px header bars, and a
-sticky footer on the entry screen carrying live totals. Numbers are always
-right-aligned and tabular.
+Layout conventions worth preserving: 48px header bars, and a sticky footer on
+the entry screen carrying live totals. Numbers are always right-aligned and
+tabular.
+
+The sidebar has three states, and `md` (768px) is the line between them:
+
+| Viewport | Sidebar | How it is dismissed |
+|---|---|---|
+| `md` and up, expanded | 214px, labels | "Ciutkan" button at its foot |
+| `md` and up, collapsed | 60px, icons only | same button, now "Lebarkan" |
+| below `md` | 260px drawer over the page | backdrop, ✕, Escape, or following a link |
+
+The expanded/collapsed choice is a cookie (`sidebar=rail|full`) read in
+`+layout.server.ts`, not localStorage: the server has to render the rail at
+the chosen width or it visibly jumps on every full page load.
+
+Below `md` the drawer is `visibility: hidden` when shut, not merely translated
+off-screen — a sidebar parked at -100% is still in the tab order, and tabbing
+through a phone screen would walk into links nobody can see. `inert` cannot do
+this job: it is an attribute, so it takes no responsive variant, and `open` is
+always false on desktop.
 
 ## Anti-patterns seen in the original prototype
 

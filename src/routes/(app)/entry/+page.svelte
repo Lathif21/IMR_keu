@@ -1,9 +1,10 @@
 <script lang="ts">
+  import CalendarDays from 'lucide-svelte/icons/calendar-days';
   import CircleCheckBig from 'lucide-svelte/icons/circle-check-big';
   import Lock from 'lucide-svelte/icons/lock';
   import Plus from 'lucide-svelte/icons/plus';
   import { PERIOD_STATUS_LABEL, type PeriodStatus } from '$lib/domain';
-  import { formatDateTime, formatPeriod, periodToMonth } from '$lib/format';
+  import { MONTH_PATTERN, formatDateTime, formatPeriod, periodToMonth } from '$lib/format';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -16,6 +17,62 @@
     approved: 'bg-positive/10 text-positive',
     locked: 'bg-muted text-subtle'
   };
+
+  /**
+   * The month the field currently holds, so the screen can echo it back in
+   * Indonesian.
+   *
+   * Chrome renders `type="month"` in the *browser's* language, not the page's
+   * — verified: the same markup under `--lang=id-ID` reads "Agustus 2025" and
+   * under `--lang=en-US` reads "August 2025", and `<html lang="id">` does not
+   * change it. Nothing here can override that, so rather than fight the
+   * control, the choice is confirmed underneath it with `formatPeriod()`, the
+   * same function every other screen uses.
+   */
+  // Seeded once here and re-seeded by the effect below; deliberately not a
+  // `$derived`, because the field has to stay writable.
+  // svelte-ignore state_referenced_locally
+  let month = $state(data.defaultMonth);
+
+  /**
+   * Switching entity is a client-side navigation that keeps this component
+   * mounted, and each entity suggests a different next month. Re-seed on that
+   * change only — re-seeding on every `data` change would overwrite a month
+   * the user had already picked when a failed action re-ran `load`.
+   */
+  let seededFor = $state('');
+  $effect(() => {
+    const code = data.selected?.code ?? '';
+    if (code === seededFor) return;
+    seededFor = code;
+    month = data.defaultMonth;
+  });
+
+  const monthLabel = $derived(
+    MONTH_PATTERN.test(month) ? formatPeriod(`${month}-01`) : null
+  );
+
+  /**
+   * Clicking anywhere on the field opens the picker, not just the small
+   * indicator at its right edge. `event.detail > 0` keeps that to real pointer
+   * clicks: a keyboard Enter also fires `click`, and someone typing `2025-09`
+   * should not have a calendar thrown over what they are typing.
+   *
+   * `showPicker()` is Chrome/Edge/Firefox. Safari has neither it nor
+   * `type="month"`, so the field degrades there to a plain text box — which is
+   * why it carries a placeholder and a pattern. The server validates the
+   * format either way.
+   */
+  function openPicker(event: MouseEvent) {
+    if (event.detail === 0) return;
+    const field = event.currentTarget as HTMLInputElement & { showPicker?: () => void };
+    try {
+      field.showPicker?.();
+    } catch {
+      // Not supported, or refused outside a user gesture. The native
+      // indicator still works; nothing to recover from.
+    }
+  }
 </script>
 
 <svelte:head><title>Input Laporan · Portal Keuangan</title></svelte:head>
@@ -127,15 +184,39 @@
           <label for="bulan" class="block text-[11px] font-medium text-muted-foreground mb-1.5">
             Bulan laporan
           </label>
-          <input
-            id="bulan"
-            name="bulan"
-            type="month"
-            required
-            value={data.defaultMonth}
-            class="h-[30px] px-3 bg-background border border-border rounded-lg text-[13px] text-foreground
-                   tabular-nums focus:outline-none focus:border-primary"
-          />
+          <div class="relative">
+            <!-- The affordance. `type="month"` already has a picker, but the
+                 browser's own indicator is small and easy to miss, so the
+                 field says what it is before anyone clicks it. -->
+            <CalendarDays
+              size={14}
+              class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+            />
+            <input
+              id="bulan"
+              name="bulan"
+              type="month"
+              required
+              bind:value={month}
+              onclick={openPicker}
+              placeholder="YYYY-MM"
+              pattern="\d{'{'}4{'}'}-\d{'{'}2{'}'}"
+              class="month-field h-[30px] pl-8 pr-2.5 w-[172px] bg-background border border-border
+                     rounded-lg text-[13px] text-foreground tabular-nums cursor-pointer
+                     focus:outline-none focus:border-primary"
+            />
+          </div>
+          <!-- Chrome writes the month name in the browser's language, which on
+               an English-language browser reads "August 2025" in an otherwise
+               Indonesian screen. This line is the app's own wording, and it
+               doubles as confirmation of what the picker just set. -->
+          <p class="text-[11px] text-muted-foreground mt-1.5 h-4">
+            {#if monthLabel}
+              Periode <span class="text-foreground font-medium">{monthLabel}</span>
+            {:else}
+              Pilih bulan
+            {/if}
+          </p>
         </div>
         <button
           type="submit"
@@ -202,3 +283,28 @@
     </div>
   </div>
 {/if}
+
+<style>
+  /*
+    Chrome puts its own calendar glyph at the right edge of a month field.
+    With `color-scheme: dark` it is at least visible now, but next to the
+    leading icon it reads as two calendars for one control. Widen its hit area
+    and let it be the click target it already is, without a second glyph:
+    the whole field opens the picker anyway.
+  */
+  .month-field::-webkit-calendar-picker-indicator {
+    opacity: 0.55;
+    cursor: pointer;
+    padding: 2px;
+    margin-left: 4px;
+    transition: opacity 120ms;
+  }
+
+  .month-field:hover::-webkit-calendar-picker-indicator,
+  .month-field:focus::-webkit-calendar-picker-indicator {
+    opacity: 1;
+  }
+
+  /* Firefox has no indicator to style and no `showPicker` target inside the
+     field, so the leading icon and the field itself carry the affordance. */
+</style>

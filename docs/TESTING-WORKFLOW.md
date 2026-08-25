@@ -777,6 +777,27 @@ done
 | `direksi` | 200 *(refusal panel)* | **403** | 200 | 200 | 200 | 200 | Dasbor, Laporan P&L, Persetujuan |
 | `auditor` | 200 *(refusal panel)* | **403** | 200 *(read-only)* | 200 | 200 | 200 | Dasbor, Laporan P&L |
 
+The three `/admin` screens redirect anyone who is not `direksi`, through
+`/admin/+layout.server.ts`:
+
+```sh
+for u in staf.ilj manajer direksi auditor; do
+  printf '%-10s entities:%-22s templates:%-22s users:%s
+' "$u"     "$(code $u /admin/entities)" "$(code $u /admin/templates)" "$(code $u /admin/users)"
+done
+```
+
+| Role | `/admin/*` |
+|---|---|
+| `direksi` | 200 |
+| `manajer_keuangan` | **303 → `/`** |
+| `staf_entitas` | **303 → `/`** |
+| `auditor` | **303 → `/`** |
+
+A redirect rather than a 403: these routes are not advertised to anyone else,
+and a 403 would confirm they exist. The redirect is UX either way — every write
+behind it also needs `current_user_role() = 'direksi'` in the database.
+
 The P&L screen has no role check of its own — RLS decides, and an entity the
 caller may not read comes back as zero rows. That has to be a **404**, not an
 empty page: an empty page tells a staff member the report is missing when it
@@ -875,9 +896,25 @@ period.
 | I.12 | Click a queue row's entity name | Panel expands; the URL gains `?buka=…`; reload keeps it open |
 | I.13 | Disable JavaScript, repeat Journey 1 | Create, save, submit all work; amounts post as typed; period picker needs its **Tampilkan** button |
 | I.14 | On an **empty** period, fill several amounts and a note, then press **Simpan Draft** | Every figure stays on screen exactly as typed. Nothing blanks, nothing reverts to 0 |
+| I.15 | Click anywhere on **Bulan laporan** at `/entry` | The month picker opens — not only on the small indicator at its right edge |
+| I.16 | Focus the field and type `2029-05`, pressing <kbd>Enter</kbd> | No calendar is thrown over what you are typing. Enter submits the form |
+| I.17 | Change the month | The line under the field follows it: *Periode Mei 2029*. Clear the field and it reads *Pilih bulan* |
+| I.18 | Open any `<select>` on any screen | The dropdown is dark, not a white panel on a black page |
 
 I.4 and I.6 are the two that decide whether finance staff keep using this
 screen or go back to a spreadsheet. I.13 is the one most likely to rot.
+
+I.18 is what `color-scheme: dark` buys, and it is easy to regress: native
+controls are painted by the browser, not by our tokens. Without it the month
+picker opens as a white calendar and its indicator is a near-black glyph on a
+near-black field — which is what made the date field look like a plain text box
+in the first place.
+
+I.17 exists because Chrome renders `type="month"` in the **browser's**
+language, not the page's: the same markup reads "Agustus 2025" under an
+Indonesian Chrome and "August 2025" under an English one, and `<html lang="id">`
+does not change it. The line underneath is the app's own wording, so the screen
+says the same thing to everybody.
 
 I.14 is a regression, and it only shows on a period that was empty when the
 page loaded — which is why it survived every earlier pass of this checklist.

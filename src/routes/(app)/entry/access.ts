@@ -33,9 +33,20 @@ export async function loadEntryAccess(
   supabase: SupabaseClient,
   requestedCode: string | null
 ): Promise<EntryAccess> {
+  /**
+   * Inactive entities are filtered out here, not just hidden in the admin
+   * screen. `v_period_completeness` already counts only active entities as
+   * expected to report, so an entity nobody expects a report from must not
+   * offer a form for one — otherwise a staff member can file a period that
+   * the dashboard will never ask for and never miss.
+   *
+   * The link row in `user_entity_access` is left alone: deactivating is
+   * reversible, and re-activating should not mean re-granting access.
+   */
   const { data, error } = await supabase
     .from('user_entity_access')
     .select('entities!inner(id, code, legal_name, business_line)')
+    .eq('entities.is_active', true)
     .returns<AccessRow[]>();
 
   if (error) return { entities: [], selected: null, error };
