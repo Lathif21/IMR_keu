@@ -874,9 +874,20 @@ period.
 | I.11 | Press **Buka kunci** as direksi | Confirmation naming the audit log and consolidation |
 | I.12 | Click a queue row's entity name | Panel expands; the URL gains `?buka=…`; reload keeps it open |
 | I.13 | Disable JavaScript, repeat Journey 1 | Create, save, submit all work; amounts post as typed; period picker needs its **Tampilkan** button |
+| I.14 | On an **empty** period, fill several amounts and a note, then press **Simpan Draft** | Every figure stays on screen exactly as typed. Nothing blanks, nothing reverts to 0 |
 
 I.4 and I.6 are the two that decide whether finance staff keep using this
 screen or go back to a spreadsheet. I.13 is the one most likely to rot.
+
+I.14 is a regression, and it only shows on a period that was empty when the
+page loaded — which is why it survived every earlier pass of this checklist.
+`use:enhance` calls `HTMLFormElement.reset()` after a successful action, and
+reset restores each control to its `value` *attribute*. Svelte drives these
+fields through the value *property*, so saving threw the screen back to what
+had been rendered at page load: zeros for a month someone had just filled in.
+The figures were in the database the whole time; only the screen had stopped
+agreeing with them. Re-open a saved period and check the amounts against
+`report_lines` if you ever suspect it has come back.
 
 ---
 
