@@ -87,6 +87,27 @@ Five screens in the export, four of them real:
 | Persetujuan | `/approval` | Queue with expandable review panel |
 | ~~Tampilan Mobile~~ | — | Prototype device-frame preview. Not a route. The real app is responsive down to 360px — verified, not assumed; see `TESTING.md` Part 7. |
 
+Three admin screens exist beyond the Figma export, all behind
+`/admin/+layout.server.ts` which redirects anyone who is not `direksi`:
+
+| Screen | Route | Notes |
+|---|---|---|
+| Entitas | `/admin/entities` | Create and edit entities; reporting basis is set through an RPC, never a column write |
+| Template | `/admin/templates` | Versioned; a template used by a non-draft period is frozen and must be duplicated |
+| Pengguna | `/admin/users` | The only screen holding the service role key |
+
+Two rules worth carrying in your head before touching them:
+
+- **`entities.reporting_basis` cannot be written directly.** A trigger refuses
+  it. `set_entity_reporting_basis()` writes the decision to
+  `accounting_policies` and the value to `entities` in one transaction, so the
+  reason and the figure can never drift apart.
+- **A template in use is immutable.** `v_period_pnl` resolves a figure's
+  section by joining to `report_template_lines`, so editing a line's section
+  moves historical amounts between buckets across every period that ever used
+  the template — locked ones included, silently. Duplicating to a new version
+  is the only way forward; old periods keep pointing at the old `template_id`.
+
 The export is React; this project is SvelteKit. Port screen by screen —
 do not vendor the `src/app/components/ui` directory. It ships 48 shadcn
 components plus MUI, react-slick, react-dnd and canvas-confetti; the four

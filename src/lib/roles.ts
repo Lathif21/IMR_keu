@@ -37,3 +37,17 @@ export function canEnterReports(role: UserRole | null): boolean {
 export function canUnlockPeriod(role: UserRole | null): boolean {
   return role === 'direksi';
 }
+
+/**
+ * SQL: `current_user_role() = 'direksi'`, which is the USING clause on
+ * `entities_write`, `profiles_manage`, `uea_manage`, `templates_manage` and
+ * `template_lines_manage` — every policy guarding master data.
+ *
+ * Distinct from `canUnlockPeriod()` even though both are true for exactly one
+ * role today: one is about administering the system, the other about a single
+ * workflow transition. Collapsing them would tie two unrelated decisions to
+ * one predicate.
+ */
+export function isDirector(role: UserRole | null): boolean {
+  return role === 'direksi';
+}

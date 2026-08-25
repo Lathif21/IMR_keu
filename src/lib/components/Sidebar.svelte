@@ -7,10 +7,11 @@
   import FileText from 'lucide-svelte/icons/file-text';
   import LayoutDashboard from 'lucide-svelte/icons/layout-dashboard';
   import LogOut from 'lucide-svelte/icons/log-out';
+  import Settings from 'lucide-svelte/icons/settings';
   import X from 'lucide-svelte/icons/x';
   import { page } from '$app/state';
   import { ROLE_LABEL, type UserRole } from '$lib/domain';
-  import { canApprove, canEnterReports, canReadAllEntities } from '$lib/roles';
+  import { canApprove, canEnterReports, canReadAllEntities, isDirector } from '$lib/roles';
 
   let {
     role,
@@ -37,6 +38,12 @@
     icon: typeof LayoutDashboard;
     href: string;
     visible: boolean;
+    /**
+     * Path prefix that counts as "you are here", when it is wider than `href`.
+     * Administrasi links to one of three tabs, so without this the item goes
+     * dark the moment you switch to Template or Pengguna.
+     */
+    match?: string;
   };
 
   // Screens come from the table in CLAUDE.md. "Tampilan Mobile" is not here:
@@ -52,7 +59,15 @@
     },
     { label: 'Laporan P&L', icon: FileText, href: '/entities', visible: true },
     { label: 'Input Laporan', icon: ClipboardList, href: '/entry', visible: canEnterReports(role) },
-    { label: 'Persetujuan', icon: CircleCheckBig, href: '/approval', visible: canApprove(role) }
+    { label: 'Persetujuan', icon: CircleCheckBig, href: '/approval', visible: canApprove(role) },
+    // One item for three admin screens; the tabs inside /admin do the rest.
+    {
+      label: 'Administrasi',
+      icon: Settings,
+      href: '/admin/entities',
+      match: '/admin',
+      visible: isDirector(role)
+    }
   ]);
 
   const initials = $derived(
@@ -130,9 +145,10 @@
   <nav class="flex-1 p-2 space-y-px overflow-y-auto">
     {#each items as item (item.label)}
       {#if item.visible}
+        {@const base = item.match ?? item.href}
         {@const active =
-          page.url.pathname === item.href ||
-          (item.href !== '/' && page.url.pathname.startsWith(item.href + '/'))}
+          page.url.pathname === base ||
+          (base !== '/' && page.url.pathname.startsWith(base + '/'))}
         <a
           href={item.href}
           aria-current={active ? 'page' : undefined}

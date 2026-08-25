@@ -1,7 +1,8 @@
 # Roadmap
 
-Status per 23 Agustus 2026. Fase 1 selesai. Fase 2 selesai kecuali satu hal
-yang menunggu file dari klien.
+Status per 24 Agustus 2026. Fase 1 selesai. Fase 2 selesai kecuali impor data
+ILJ, yang menunggu file dari klien. Fase 3 selesai kecuali layar
+antar-perusahaan.
 
 ## Sudah ada
 
@@ -13,6 +14,7 @@ yang menunggu file dari klien.
 | Input Laporan (`/entry`) | ✅ |
 | Persetujuan (`/approval`) | ✅ |
 | Laporan P&L (`/entities`) | ✅ |
+| Layar admin: entitas, template, pengguna | ✅ |
 | Tes regresi otomatis (`npm test`) | ✅ |
 | Parser impor ILJ (`scripts/import-ilj.ts`) | ✅ ditulis, ⛔ belum dijalankan |
 | Checklist uji manual | ✅ dipangkas 1.705 → 1.341 baris |
@@ -26,8 +28,7 @@ laporan laba rugi. Sidebar tidak lagi punya item yang disabled.
 | Hal | Dampak |
 |---|---|
 | **Data ILJ asli (9 bulan)** | Parser siap, workbook-nya tidak ada di repo. Seed masih sebagian dikarang; YoY tak bisa diuji |
-| Layar admin (entitas, user, akses) | Hanya bisa lewat SQL |
-| Pencatatan keputusan kebijakan | Dasbor dan layar P&L menampilkan yang masih `NULL`, tapi tak ada cara menjawabnya |
+| Pencatatan tiga kebijakan sisanya | `uang_saku_treatment`, `profit_sharing_65_35`, `accounting_standard` belum punya layar |
 | Registry transaksi antar-perusahaan | Tabel ada, layar tidak |
 | Ekspor Excel/PDF | R-12 |
 | Import CSV | R-04 |
@@ -40,7 +41,7 @@ laporan laba rugi. Sidebar tidak lagi punya item yang disabled.
 |---|---|
 | 3 · `task/03-import-ilj.md` — parser Excel → 9 periode nyata | Parser selesai dan teruji. **Menunggu `Presentasi_Rekap_Income_Full_ILJ__Revisi_FIX.xlsx`** |
 | 4 · `task/04-pnl-screen.md` — Laporan P&L | Selesai |
-| 5 · `task/05-regression-tests.md` — tes otomatis | Selesai — 112 assertion, 4 detik |
+| 5 · `task/05-regression-tests.md` — tes otomatis | Selesai — 125 assertion, 4 detik |
 
 ### Yang tersisa dari Tugas 3
 
@@ -87,23 +88,34 @@ sekaligus diubah jadi gagal-tertutup untuk peran yang tidak dikenal.
 Ini persis alasan tes otomatis dijadwalkan sekarang, bukan nanti: lubangnya ada
 sejak migrasi pertama dan tidak terlihat oleh 1.705 baris checklist manual.
 
-## Fase 3 — Layar admin (2–3 minggu)
+## Fase 3 — Layar admin · selesai
+
+| Tugas | Status |
+|---|---|
+| 6 · `task/06-admin-migration.md` — migration pendahulu | Selesai |
+| 7 · `task/07-admin-entities.md` — layar entitas | Selesai |
+| 8 · `task/08-admin-templates.md` — layar template | Selesai |
+| 9 · `task/09-admin-users.md` — layar pengguna | Selesai |
 
 ```
-/admin/entities      buat & ubah entitas, tetapkan basis pelaporan
-/admin/users         profil, peran, penautan user_entity_access
-/admin/policies      catat keputusan akuntansi (constraint mewajibkan
-                     rationale, decided_by, effective_from)
-/intercompany        registry transaksi antar-perusahaan
+/admin/entities      buat & ubah entitas, tetapkan basis pelaporan lewat RPC
+/admin/templates     template berversi, editor baris, pratinjau
+/admin/users         profil, peran, penautan user_entity_access, reset password
 ```
 
-`/admin/policies` yang paling mendesak begitu klien bisa dihubungi. Saat ini
-dua layar sudah menampilkan lubangnya — dasbor dan laporan P&L — tapi tidak ada
-satu pun yang menyediakan cara menutupnya.
+Ketiganya di balik `/admin/+layout.server.ts` yang menolak selain `direksi`.
 
-`/admin/users` naik prioritas setelah temuan di atas: menonaktifkan profil kini
-benar-benar mencabut akses, dan itu satu-satunya cara mencabutnya. Selama belum
-ada layarnya, pencabutan hanya bisa lewat SQL.
+**Sebagian `/admin/policies` sudah terjawab.** Basis pelaporan — dua dari lima
+kebijakan terbuka — kini punya jalur pencatatan yang benar: `reporting_basis`
+dan `revenue_presentation` hanya dapat diubah lewat
+`set_entity_reporting_basis()`, yang menulis alasan, pemutus, dan tanggal
+berlaku ke `accounting_policies` dalam satu transaksi. Tiga kebijakan sisanya
+(`uang_saku_treatment`, `profit_sharing_65_35`, `accounting_standard`) belum
+punya layar; mereka tidak memetakan ke kolom mana pun, jadi butuh bentuk yang
+berbeda.
+
+**`/intercompany` belum dibuat.** Tabelnya ada, view eliminasinya jalan, tapi
+layarnya belum. Itu satu-satunya sisa Fase 3.
 
 ## Fase 4 — Ekspor & produksi (2–3 minggu)
 
