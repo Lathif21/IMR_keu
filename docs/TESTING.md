@@ -19,6 +19,7 @@ cookie jar, or a human deciding whether a screen reads correctly.
 |---|---|---|
 | [1](#part-1--authentication-and-session) | Login, session, logout, redirect handling | Cookies, redirects and an open-redirect regression. HTTP-level, but outside what the suite drives. |
 | [6](#part-6--dashboard-correctness) | Dasbor figures, banners, MoM comparability | Reads rendered HTML. Whether a banner is present and says the right thing is a judgement call. |
+| [7](#part-7--layout-responsif-dan-navigasi) | Sidebar rail, mobile drawer, no sideways scroll | Needs a browser you can resize. |
 
 Automated instead, in `tests/`:
 
@@ -393,6 +394,75 @@ policies entry.
 There is deliberately no "margin below 5%" alert. Nobody has decided that
 threshold, and a loss needs no threshold to be a loss. If a magic number
 appears in this panel, it came from the prototype, not from a decision.
+
+---
+
+## Part 7 — Layout responsif dan navigasi
+
+Browser-only: `curl` cannot resize anything. Every figure below was measured
+in Chrome at that exact viewport width.
+
+The sidebar is the whole story. It used to be a fixed 214px at every width,
+which left a 360px phone with 146px of content — the dashboard title rendered
+as "Da". It now has three states, described in `CLAUDE.md`.
+
+### 7.1 Desktop — the rail
+
+At 1440px, logged in as anyone:
+
+| # | Action | Expected |
+|---|---|---|
+| 7.1.1 | Look at the sidebar | 214px, labels visible, "Ciutkan" at its foot |
+| 7.1.2 | Press **Ciutkan** | Sidebar narrows to 60px, icons only, content gains 154px |
+| 7.1.3 | Hover a collapsed icon | Tooltip gives the label |
+| 7.1.4 | Reload the page | **Still collapsed.** The choice is a cookie, so the server renders it that way and nothing jumps |
+| 7.1.5 | Press the same button, now **Lebarkan** | Back to 214px |
+| 7.1.6 | `document.cookie` | Contains `sidebar=rail` when collapsed, `sidebar=full` when not |
+
+### 7.2 Phone — the drawer
+
+At 390px:
+
+| # | Action | Expected |
+|---|---|---|
+| 7.2.1 | Load any screen | No sidebar. A 48px bar on top with ☰ and "Portal Keuangan". Content gets the **full 390px** |
+| 7.2.2 | Press ☰ | 260px drawer slides over the page, backdrop dims what is behind |
+| 7.2.3 | Press the backdrop | Closes |
+| 7.2.4 | Press ✕ | Closes |
+| 7.2.5 | Press <kbd>Esc</kbd> | Closes |
+| 7.2.6 | Open it, then tap a nav item | Navigates **and** closes — a drawer left open over the page you just asked for is a bug |
+| 7.2.7 | With the drawer shut, press <kbd>Tab</kbd> repeatedly | Focus never lands inside the sidebar. It is `visibility: hidden`, not just moved off-screen |
+
+### 7.3 No screen scrolls sideways
+
+At 360, 390, 768, 1024 and 1440, on Dasbor, Laporan P&L, Persetujuan, Input
+Laporan and the two list screens:
+
+```js
+// paste in the console on each screen
+document.documentElement.scrollWidth > document.documentElement.clientWidth
+```
+
+Expect `false` everywhere. The page itself must never scroll horizontally.
+
+Two tables are **meant** to scroll sideways inside their own box, and that is
+not the same thing:
+
+- Laporan P&L's statement — `min-w-[560px]`
+- Persetujuan's queue — `min-w-[880px]`, entity column floored at 210px
+
+Six columns of dates and statuses do not fit a phone, and squeezing them turns
+every legal name into four lines. Scrolling the box is the honest answer;
+scrolling the page is not.
+
+### 7.4 What still needs eyes
+
+| # | Check | Expected |
+|---|---|---|
+| 7.4.1 | Dasbor at 360px | Banner readable, four KPI cards stacked one per row |
+| 7.4.2 | Laporan P&L at 360px | Policy keys **wrap** — `revenue_presentation_trucking` is one unbreakable word and used to run off the side |
+| 7.4.3 | Laporan P&L at 360px | Status badge still visible; the duplicate period label beside it is what gives way |
+| 7.4.4 | Any screen, 768px | Sidebar returns to 214px and the top bar disappears |
 
 ---
 

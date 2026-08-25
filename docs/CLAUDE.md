@@ -85,16 +85,34 @@ Five screens in the export, four of them real:
 | Laporan P&L | `/entities/[id]/periods/[period]` | Read-only statement, MoM comparison |
 | Input Laporan | `/entry/[period]` | Editable rows, locked subtotals, sticky totals footer |
 | Persetujuan | `/approval` | Queue with expandable review panel |
-| ~~Tampilan Mobile~~ | — | Prototype device-frame preview. Not a route. The real app is responsive. |
+| ~~Tampilan Mobile~~ | — | Prototype device-frame preview. Not a route. The real app is responsive down to 360px — verified, not assumed; see `TESTING.md` Part 7. |
 
 The export is React; this project is SvelteKit. Port screen by screen —
 do not vendor the `src/app/components/ui` directory. It ships 48 shadcn
 components plus MUI, react-slick, react-dnd and canvas-confetti; the four
 real screens use none of them. Add each component only when a screen needs it.
 
-Layout conventions worth preserving: 214px sidebar, 48px header bars, and a
-sticky footer on the entry screen carrying live totals. Numbers are always
-right-aligned and tabular.
+Layout conventions worth preserving: 48px header bars, and a sticky footer on
+the entry screen carrying live totals. Numbers are always right-aligned and
+tabular.
+
+The sidebar has three states, and `md` (768px) is the line between them:
+
+| Viewport | Sidebar | How it is dismissed |
+|---|---|---|
+| `md` and up, expanded | 214px, labels | "Ciutkan" button at its foot |
+| `md` and up, collapsed | 60px, icons only | same button, now "Lebarkan" |
+| below `md` | 260px drawer over the page | backdrop, ✕, Escape, or following a link |
+
+The expanded/collapsed choice is a cookie (`sidebar=rail|full`) read in
+`+layout.server.ts`, not localStorage: the server has to render the rail at
+the chosen width or it visibly jumps on every full page load.
+
+Below `md` the drawer is `visibility: hidden` when shut, not merely translated
+off-screen — a sidebar parked at -100% is still in the tab order, and tabbing
+through a phone screen would walk into links nobody can see. `inert` cannot do
+this job: it is an attribute, so it takes no responsive variant, and `open` is
+always false on desktop.
 
 ## Anti-patterns seen in the original prototype
 

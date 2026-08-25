@@ -143,11 +143,11 @@
 
 <div class="flex flex-col h-full overflow-hidden">
   <!-- header · 48px -->
-  <div class="h-12 flex items-center justify-between px-5 border-b border-border shrink-0 gap-4">
+  <div class="h-12 flex items-center justify-between px-4 sm:px-5 border-b border-border shrink-0 gap-3">
     <div class="flex items-center gap-3 min-w-0">
-      <h1 class="text-[13px] font-semibold text-foreground shrink-0">Persetujuan Laporan</h1>
+      <h1 class="text-[13px] font-semibold text-foreground truncate">Persetujuan Laporan</h1>
       {#if !data.canApprove}
-        <span class="text-[11px] text-muted-foreground truncate">
+        <span class="text-[11px] text-muted-foreground truncate hidden sm:inline">
           Hanya baca — peran Anda tidak menyetujui laporan
         </span>
       {/if}
@@ -182,7 +182,7 @@
   </div>
 
   {#if !data.month}
-    <div class="flex-1 p-5">
+    <div class="flex-1 p-4 sm:p-5">
       <div class="max-w-[520px] bg-card border border-border rounded-lg p-5">
         <h2 class="text-[13px] font-semibold text-foreground mb-2">Belum ada periode</h2>
         <p class="text-[12px] text-muted-foreground leading-relaxed">
@@ -193,7 +193,7 @@
     </div>
   {:else}
     <div class="flex-1 overflow-y-auto">
-      <div class="p-5 pb-0 space-y-3">
+      <div class="p-4 sm:p-5 pb-0 space-y-3">
         <!-- Completeness, same rule as the dashboard: a group figure computed
              while entities are missing is a different number, never a smaller
              one. It is never shown without saying so. -->
@@ -248,10 +248,19 @@
         {/if}
       </div>
 
-      <table class="w-full border-collapse mt-4">
+      <!-- Six columns of dates, names and statuses do not fit a phone, and
+           squeezing them turns every cell into two words a line. It scrolls
+           sideways inside its own box instead — the page itself never does. -->
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[880px] border-collapse mt-4">
         <thead>
           <tr class="border-b border-border">
-            <th class="py-2.5 px-4 text-left text-[11px] font-medium text-muted-foreground">
+            <!-- The other five columns are fixed, so without a floor this one
+                 takes whatever is left — 120px on a phone, which wraps every
+                 legal name onto four lines. -->
+            <th
+              class="py-2.5 px-4 text-left text-[11px] font-medium text-muted-foreground min-w-[210px]"
+            >
               Entitas
             </th>
             <th class="py-2.5 px-4 text-left text-[11px] font-medium text-muted-foreground w-[130px]">
@@ -597,8 +606,9 @@
               </tr>
             {/if}
           {/each}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   {/if}
 </div>
