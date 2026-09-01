@@ -111,9 +111,15 @@ and are never displayed in the UI.
 | Email | Role | Reads | Writes |
 |---|---|---|---|
 | `direksi@example.test` | direksi | everything | everything; only role that can unlock |
-| `manajer@example.test` | manajer_keuangan | everything | approves, locks, manages intercompany |
+| `manajer@example.test` | manajer_keuangan | the four it is assigned | approves, locks, manages intercompany — within that scope |
 | `staf.ilj@example.test` | staf_entitas | ILJ only | ILJ draft periods only |
-| `auditor@example.test` | auditor | everything | nothing |
+| `auditor@example.test` | auditor | the four it is assigned | nothing |
+
+Only `direksi` sees every entity by virtue of its role. Manajer and auditor are
+scoped through `user_entity_access` like staff are, and the seed happens to
+assign them all four — revoke a row and the scope narrows. Group-level tables
+with no `entity_id` (`profiles`, `intercompany_transactions`, `audit_log`) stay
+open to all three through `can_read_group_data()`.
 
 ---
 

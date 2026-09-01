@@ -8,7 +8,7 @@ import type {
   RevenuePresentation
 } from '$lib/domain';
 import { previousPeriod } from '$lib/format';
-import { canReadAllEntities } from '$lib/roles';
+import { canEnterReports, canReadAllEntities } from '$lib/roles';
 import type { PageServerLoad } from './$types';
 
 interface EntityRow {
@@ -45,6 +45,13 @@ function fail(context: string, cause: PostgrestError): never {
  */
 const EMPTY = {
   scoped: false,
+  /**
+   * Where a scoped caller should have gone instead. Filled in only on the
+   * scoped branch — the empty state used to hardcode /entry, which was true
+   * while entity staff were the only scoped role and became wrong the moment
+   * manajer and auditor joined them: neither of those can enter a report.
+   */
+  scopedNext: null as { href: string; label: string } | null,
   periods: [] as PeriodCompleteness[],
   period: null as string | null,
   completeness: null as PeriodCompleteness | null,
@@ -63,7 +70,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
    * one entity's revenue as the group's. Refuse instead.
    */
   if (!canReadAllEntities(locals.role)) {
-    return { ...EMPTY, scoped: true };
+    return {
+      ...EMPTY,
+      scoped: true,
+      scopedNext: canEnterReports(locals.role)
+        ? { href: '/entry', label: 'Input Laporan' }
+        : { href: '/entities', label: 'Laporan P&L' }
+    };
   }
 
   const { supabase } = locals;

@@ -3,6 +3,7 @@ import { createClient, type PostgrestError, type SupabaseClient } from '@supabas
 import { PUBLIC_SUPABASE_URL } from '$env/static/public';
 import { SUPABASE_SERVICE_ROLE_KEY } from '$env/static/private';
 import type { UserRole } from '$lib/domain';
+import { isEntityScopedRole } from '$lib/roles';
 import type { Actions, PageServerLoad } from './$types';
 
 export interface AdminProfile {
@@ -200,8 +201,9 @@ export const actions: Actions = {
       });
     }
 
-    // Entity links only mean anything for entity staff.
-    if (role === 'staf_entitas') {
+    // Entity links mean something for every role but direksi, which sees all
+    // entities without a row here.
+    if (isEntityScopedRole(role)) {
       const entityIds = form.getAll('entity_ids').map(String).filter(Boolean);
       if (entityIds.length > 0) {
         const { error: accessError } = await locals.supabase.from('user_entity_access').insert(
@@ -253,11 +255,17 @@ export const actions: Actions = {
     }
 
     /**
-     * Leaving `staf_entitas` makes the access rows irrelevant, but they are
-     * kept: if the role is handed back, the links are still there. Nothing
-     * reads them for other roles — `can_read_all_entities()` covers those.
+     * Promotion to direksi makes the access rows irrelevant, but they are
+     * kept: if the role is handed back, the links are still there, and direksi
+     * reads every entity through `can_read_all_entities()` regardless.
+     *
+     * The other three roles all reconcile here. Before entity scoping reached
+     * manajer and auditor this branch was `role === 'staf_entitas'`, so
+     * editing a manajer silently discarded whatever the form submitted — which
+     * was harmless while the rows meant nothing, and would now be the
+     * difference between that manajer seeing four entities or none.
      */
-    if (role === 'staf_entitas') {
+    if (isEntityScopedRole(role)) {
       const wanted = new Set(form.getAll('entity_ids').map(String).filter(Boolean));
 
       const { data: current, error: readError } = await locals.supabase

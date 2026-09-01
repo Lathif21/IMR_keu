@@ -8,7 +8,17 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { closeDb, entityId, periodId, resetFixture, seedPeriod, signIn, sql, userId } from './helpers';
+import {
+  closeDb,
+  entityId,
+  periodId,
+  resetFixture,
+  seedPeriod,
+  signIn,
+  sql,
+  userId,
+  type SeedRole
+} from './helpers';
 
 let staff: SupabaseClient;
 let auditor: SupabaseClient;
@@ -192,5 +202,135 @@ describe('profil nonaktif', () => {
     } finally {
       await sql('update profiles set is_active = true where id = $1', [staffId]);
     }
+  });
+});
+
+/**
+ * Migration 20250104000000_scope_manager_auditor.sql.
+ *
+ * Before it, `can_read_all_entities()` was true for these two roles, so
+ * `has_entity_access()` short-circuited and never read `user_entity_access` —
+ * revoking a row changed nothing. That is exactly what these assert against:
+ * each one revokes a single assignment and reads back.
+ *
+ * The revoke is done with `sql()` rather than through the client on purpose.
+ * Only direksi may write `user_entity_access`, and the point under test is the
+ * read scope, not who may grant.
+ */
+describe('cakupan entitas manajer dan auditor', () => {
+  /** Restores the assignment however the assertion ends. */
+  async function withoutAccess(role: SeedRole, entity: string, body: () => Promise<void>) {
+    const uid = await userId(role);
+    const eid = await entityId(entity);
+    await sql('delete from user_entity_access where user_id = $1 and entity_id = $2', [uid, eid]);
+    try {
+      await body();
+    } finally {
+      await sql(
+        'insert into user_entity_access (user_id, entity_id) values ($1, $2) ' +
+          'on conflict do nothing',
+        [uid, eid]
+      );
+    }
+  }
+
+  it('manajer kehilangan entitas yang penugasannya dicabut', async () => {
+    await withoutAccess('manajer', 'TAMBANG', async () => {
+      const scoped = await signIn('manajer');
+
+      const { data: entities } = await scoped.from('entities').select('code');
+      expect(entities?.map((row) => row.code).sort()).toEqual(['AMDK', 'GARAM', 'ILJ']);
+
+      // And the scope reaches through to the rows, not just the entity list.
+      const { data: pnl } = await scoped.from('v_period_pnl').select('entity_code');
+      expect(pnl?.some((row) => row.entity_code === 'TAMBANG')).toBe(false);
+    });
+  });
+
+  it('manajer tidak dapat menyetujui periode entitas yang bukan miliknya', async () => {
+    await withoutAccess('manajer', 'TAMBANG', async () => {
+      const scoped = await signIn('manajer');
+
+      /**
+       * `can_approve()` is still true for this account — the role did not
+       * change. What stops the write is `periods_update`'s entity scope, and
+       * a USING clause that filters the row out updates zero rows without
+       * raising, so the row is read back rather than the error inspected.
+       */
+      const [before] = await sql<{ status: string }>('select status from periods where id = $1', [
+        tambangPeriod
+      ]);
+
+      const { data, error } = await scoped
+        .from('periods')
+        .update({ status: 'draft' })
+        .eq('id', tambangPeriod)
+        .select();
+
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+
+      // Compared against what it was, not against a literal: the fixture owns
+      // this period's status, and asserting a specific value here would make
+      // the test fail the day the fixture moves rather than the day the scope
+      // breaks.
+      const [after] = await sql<{ status: string }>('select status from periods where id = $1', [
+        tambangPeriod
+      ]);
+      expect(after.status).toBe(before.status);
+    });
+  });
+
+  it('auditor kehilangan entitas yang penugasannya dicabut', async () => {
+    await withoutAccess('auditor', 'AMDK', async () => {
+      const scoped = await signIn('auditor');
+
+      const { data } = await scoped.from('entities').select('code');
+      expect(data?.map((row) => row.code).sort()).toEqual(['GARAM', 'ILJ', 'TAMBANG']);
+    });
+  });
+
+  /**
+   * The other half of the migration. These tables have no `entity_id` to
+   * narrow, so they moved to `can_read_group_data()`; narrowing them along
+   * with the entity scope would have taken the approval queue's submitter
+   * names from the manajer and the audit trail from the auditor.
+   */
+  it('tetap membaca data tingkat grup meski tanpa satu pun entitas', async () => {
+    const uid = await userId('manajer');
+    await sql('delete from user_entity_access where user_id = $1', [uid]);
+    try {
+      const scoped = await signIn('manajer');
+
+      const { data: entities } = await scoped.from('entities').select('code');
+      expect(entities).toEqual([]);
+
+      // Names of everyone, so the approval queue can say who submitted.
+      const { data: profiles } = await scoped.from('profiles').select('id');
+      expect((profiles ?? []).length).toBeGreaterThan(1);
+
+      const { error: auditError } = await scoped.from('audit_log').select('id').limit(1);
+      expect(auditError).toBeNull();
+
+      const { error: icError } = await scoped
+        .from('intercompany_transactions')
+        .select('id')
+        .limit(1);
+      expect(icError).toBeNull();
+    } finally {
+      await sql(
+        'insert into user_entity_access (user_id, entity_id) ' +
+          'select $1, id from entities on conflict do nothing',
+        [uid]
+      );
+    }
+  });
+
+  it('staf entitas tidak ikut terbawa: data grup tetap tertutup untuknya', async () => {
+    const { data: profiles } = await staff.from('profiles').select('id');
+    expect(profiles?.length).toBe(1);
+
+    const { data: audit } = await staff.from('audit_log').select('id').limit(1);
+    expect(audit).toEqual([]);
   });
 });

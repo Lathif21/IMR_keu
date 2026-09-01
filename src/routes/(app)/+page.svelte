@@ -166,9 +166,14 @@
         </div>
         <p class="text-[12px] text-muted-foreground leading-relaxed">
           Dasbor ini menampilkan angka konsolidasi seluruh grup. Akses Anda terbatas pada entitas
-          sendiri, dan total grup yang dihitung dari sebagian entitas bukan versi kecil dari angka
-          sebenarnya — itu angka yang berbeda. Layar yang Anda perlukan adalah
-          <a href="/entry" class="text-primary hover:underline">Input Laporan</a>.
+          yang ditugaskan kepada Anda, dan total grup yang dihitung dari sebagian entitas bukan
+          versi kecil dari angka sebenarnya — itu angka yang berbeda.
+          {#if data.scopedNext}
+            Layar yang Anda perlukan adalah
+            <a href={data.scopedNext.href} class="text-primary hover:underline"
+              >{data.scopedNext.label}</a
+            >.
+          {/if}
         </p>
       </div>
     </div>

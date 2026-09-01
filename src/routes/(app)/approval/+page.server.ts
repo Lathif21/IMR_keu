@@ -8,7 +8,7 @@ import type {
   RevenuePresentation
 } from '$lib/domain';
 import { MONTH_PATTERN, periodToMonth, previousPeriod } from '$lib/format';
-import { canApprove, canReadAllEntities, canUnlockPeriod } from '$lib/roles';
+import { canApprove, canReviewSubmissions, canUnlockPeriod } from '$lib/roles';
 import type { Actions, PageServerLoad } from './$types';
 
 interface EntityRow {
@@ -66,15 +66,21 @@ const STATUS_RANK: Record<PeriodStatus | 'missing', number> = {
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   /**
-   * Reviewing is reading, and an auditor reads everything (`can_read_all_
-   * entities()`). The action buttons are gated separately on `canApprove()`,
-   * so an auditor sees the queue and no controls — which is also what RLS
-   * enforces: `periods_update` excludes `is_readonly_role()`.
+   * Reviewing is reading, so an auditor belongs here. The action buttons are
+   * gated separately on `canApprove()`, so an auditor sees the queue and no
+   * controls — which is also what RLS enforces: `periods_update` excludes
+   * `is_readonly_role()`.
+   *
+   * The queue itself is whatever RLS returns, which since the entity-scoping
+   * migration is the reviewer's assigned entities rather than all of them. A
+   * count of pending periods narrows honestly; a consolidated total would
+   * not, which is why the dashboard refuses a scoped caller and this screen
+   * does not.
    *
    * Entity staff have no business here at all and go to the dashboard, which
    * points them at their own entry screen.
    */
-  if (!canReadAllEntities(locals.role)) redirect(303, '/');
+  if (!canReviewSubmissions(locals.role)) redirect(303, '/');
 
   const { supabase } = locals;
 
