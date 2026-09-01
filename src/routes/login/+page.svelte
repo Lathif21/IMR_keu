@@ -2,6 +2,9 @@
   import ChartColumn from 'lucide-svelte/icons/chart-column';
   import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
   import { enhance } from '$app/forms';
+  import { page } from '$app/state';
+  import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+  import { parseTheme } from '$lib/theme';
   import type { ActionData } from './$types';
 
   let { form }: { form: ActionData } = $props();
@@ -15,10 +18,13 @@
       <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
         <ChartColumn size={17} class="text-primary-foreground" />
       </div>
-      <div>
+      <div class="flex-1 min-w-0">
         <p class="text-[14px] font-semibold text-foreground leading-tight">Portal Keuangan</p>
         <p class="text-[11px] text-muted-foreground">Grup Holding</p>
       </div>
+      <!-- The one screen every user meets before there is a sidebar to put
+           this in; without it the preference is unreachable until you log in. -->
+      <ThemeToggle theme={parseTheme(page.data.theme)} variant="icon" />
     </div>
 
     <form method="POST" use:enhance class="bg-card border border-border rounded-lg p-5 space-y-4">

@@ -1,41 +1,104 @@
 /* Design tokens — ported from Figma Make "Financial Reporting Portal".
-   Dark-only. There is no light theme; the source file defines :root and
-   .dark identically. Don't add one without a design decision.
+
+   The palette is defined twice: `:root` is dark (the design's original and
+   still the default), `[data-theme="light"]` is the light counterpart. The
+   `@theme` block below never holds a literal colour — it points every Tailwind
+   utility at a `--p-*` custom property, which is what the theme switch
+   actually rewrites. Add a token in three places or not at all.
 
    Rule: use the token, never the hex. The Figma export hardcodes
    bg-[#18181B] everywhere; that is an export artifact, not the design. */
 
 @import "tailwindcss";
 
-@theme {
+/* ── Dark (default) ─────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+
   /* surfaces */
-  --color-background: #0a0a0b;
-  --color-foreground: #fafafa;
-  --color-card: #18181b;
-  --color-popover: #18181b;
-  --color-muted: #27272a;
-  --color-muted-foreground: #a1a1aa;
-  --color-subtle: #52525b;      /* captions, "belum lapor", disabled */
-  --color-border: #27272a;
-  --color-border-strong: #3f3f46; /* totals row top border only */
+  --p-background: #0a0a0b;
+  --p-foreground: #fafafa;
+  --p-card: #18181b;
+  --p-popover: #18181b;
+  --p-muted: #27272a;
+  --p-muted-foreground: #a1a1aa;
+  --p-subtle: #52525b;      /* captions, "belum lapor", disabled */
+  --p-border: #27272a;
+  --p-border-strong: #3f3f46; /* totals row top border only */
 
   /* brand */
-  --color-primary: #3b82f6;
-  --color-primary-foreground: #ffffff;
-  --color-accent: #1d4ed8;
+  --p-primary: #3b82f6;
+  --p-primary-foreground: #ffffff;
+  --p-accent: #1d4ed8;
 
   /* semantic — see usage rules below */
-  --color-positive: #22c55e;
-  --color-warning: #f59e0b;
-  --color-destructive: #ef4444;
+  --p-positive: #22c55e;
+  --p-warning: #f59e0b;
+  --p-destructive: #ef4444;
 
-  /* entity/business-line series. Order is fixed: assigning by array index
-     means a line changes colour when an entity is added. Store the key on
-     the entity row (entities.theme_color) instead. */
-  --color-line-1: #3b82f6;  /* logistik  */
-  --color-line-2: #8b5cf6;  /* amdk      */
-  --color-line-3: #f59e0b;  /* tambang   */
-  --color-line-4: #22c55e;  /* garam     */
+  /* entity/business-line series */
+  --p-line-1: #3b82f6;  /* logistik  */
+  --p-line-2: #8b5cf6;  /* amdk      */
+  --p-line-3: #f59e0b;  /* tambang   */
+  --p-line-4: #22c55e;  /* garam     */
+}
+
+/* ── Light ──────────────────────────────────────────────────────────────────
+   Not a mechanical inversion. Two things do not survive one: the greys, which
+   have to stay lighter than the text rather than darker than it, and the
+   saturated hues, which read as glare on white and are stepped down a shade.
+   `card` stays a hair off `background` so the sidebar's hover state — which
+   uses it — is still visible on a white page. */
+[data-theme='light'] {
+  color-scheme: light;
+
+  --p-background: #ffffff;
+  --p-foreground: #18181b;
+  --p-card: #f4f4f5;
+  --p-popover: #ffffff;
+  --p-muted: #f4f4f5;
+  --p-muted-foreground: #52525b;
+  --p-subtle: #a1a1aa;
+  --p-border: #e4e4e7;
+  --p-border-strong: #d4d4d8;
+
+  --p-primary: #2563eb;
+  --p-primary-foreground: #ffffff;
+  --p-accent: #1d4ed8;
+
+  --p-positive: #16a34a;
+  --p-warning: #d97706;
+  --p-destructive: #dc2626;
+
+  --p-line-1: #2563eb;
+  --p-line-2: #7c3aed;
+  --p-line-3: #d97706;
+  --p-line-4: #16a34a;
+}
+
+@theme {
+  --color-background: var(--p-background);
+  --color-foreground: var(--p-foreground);
+  --color-card: var(--p-card);
+  --color-popover: var(--p-popover);
+  --color-muted: var(--p-muted);
+  --color-muted-foreground: var(--p-muted-foreground);
+  --color-subtle: var(--p-subtle);
+  --color-border: var(--p-border);
+  --color-border-strong: var(--p-border-strong);
+
+  --color-primary: var(--p-primary);
+  --color-primary-foreground: var(--p-primary-foreground);
+  --color-accent: var(--p-accent);
+
+  --color-positive: var(--p-positive);
+  --color-warning: var(--p-warning);
+  --color-destructive: var(--p-destructive);
+
+  --color-line-1: var(--p-line-1);
+  --color-line-2: var(--p-line-2);
+  --color-line-3: var(--p-line-3);
+  --color-line-4: var(--p-line-4);
 
   --radius: 0.5rem;
   --text-base-size: 14px;
@@ -45,14 +108,12 @@
   html {
     font-size: var(--text-base-size);
     font-family: "Inter", system-ui, sans-serif;
-
-    /* Native controls are painted by the browser, not by our tokens, and
-       without this they are painted for a light page: the month picker opens
-       as a white calendar, its indicator is a near-black glyph on a near-black
-       field, and every <select> drops open in white. One declaration fixes the
-       lot — the app is dark-only, so there is nothing to negotiate. */
-    color-scheme: dark;
   }
+
+  /* Native controls are painted by the browser, not by our tokens, and without
+     a `color-scheme` matching the page the month picker opens as a white
+     calendar on a near-black field and every <select> drops open in white. It
+     is declared next to each palette above so it flips with the theme. */
 
   body {
     @apply bg-background text-foreground;

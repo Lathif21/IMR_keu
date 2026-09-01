@@ -3,6 +3,7 @@ import { redirect, type Handle } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/public';
 import type { UserRole } from '$lib/domain';
+import { parseTheme, THEME_COOKIE } from '$lib/theme';
 
 /**
  * One Supabase client per request, carrying the caller's cookies. Every query
@@ -95,4 +96,17 @@ const authGuard: Handle = async ({ event, resolve }) => {
   return resolve(event);
 };
 
-export const handle = sequence(supabase, authGuard);
+/**
+ * Stamps the chosen palette onto `<html>` in the response itself. Doing it here
+ * rather than from a component is the whole point: `app.css` keys every colour
+ * off this attribute, so if it arrived only after hydration the page would
+ * paint dark and then snap to light on every full load.
+ */
+const theme: Handle = async ({ event, resolve }) => {
+  const chosen = parseTheme(event.cookies.get(THEME_COOKIE));
+  return resolve(event, {
+    transformPageChunk: ({ html }) => html.replace('%theme%', chosen)
+  });
+};
+
+export const handle = sequence(theme, supabase, authGuard);

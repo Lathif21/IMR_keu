@@ -10,12 +10,16 @@
   import Settings from 'lucide-svelte/icons/settings';
   import X from 'lucide-svelte/icons/x';
   import { page } from '$app/state';
+  import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+  import type { Theme } from '$lib/theme';
   import { ROLE_LABEL, type UserRole } from '$lib/domain';
   import { canApprove, canEnterReports, canReadAllEntities, isDirector } from '$lib/roles';
 
   let {
     role,
     fullName,
+    /** Seeds the light/dark toggle; the toggle owns it after first render. */
+    theme,
     /**
      * Desktop only: 214px rail of labels, or 60px of icons. Below `md` the
      * sidebar is a drawer and this is ignored — a drawer you have opened on
@@ -28,6 +32,7 @@
   }: {
     role: UserRole | null;
     fullName: string | null;
+    theme: Theme;
     collapsed?: boolean;
     open?: boolean;
     onclose?: () => void;
@@ -55,6 +60,8 @@
       label: 'Dasbor Eksekutif',
       icon: LayoutDashboard,
       href: '/',
+      // Consolidated figures are group figures. Since manajer and auditor
+      // became entity-scoped, only direksi can be shown a group total.
       visible: canReadAllEntities(role)
     },
     { label: 'Laporan P&L', icon: FileText, href: '/entities', visible: true },
@@ -166,6 +173,12 @@
       {/if}
     {/each}
   </nav>
+
+  <!-- Sits with the rail toggle rather than in the nav: neither is a place to
+       go, they are both controls on the shell itself. -->
+  <div class="px-2 pb-1 shrink-0">
+    <ThemeToggle {theme} {collapsed} />
+  </div>
 
   <!-- Rail toggle. Desktop only: on a phone the sidebar is a drawer, and a
        drawer that collapses into icons is two controls doing one job. -->
