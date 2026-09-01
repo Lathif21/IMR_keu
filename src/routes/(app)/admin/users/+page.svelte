@@ -6,6 +6,7 @@
   import X from 'lucide-svelte/icons/x';
   import { ROLE_LABEL, type UserRole } from '$lib/domain';
   import { NO_DATA } from '$lib/format';
+  import { isEntityScopedRole } from '$lib/roles';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -14,8 +15,7 @@
 
   const editing = $derived(data.users.find((u) => u.id === data.editingId) ?? null);
 
-  /** Only entity staff are scoped to entities; every other role reads all of
-      them through `can_read_all_entities()`. */
+  /** Every role but direksi is scoped to the entities assigned to it. */
   let newRole = $state<UserRole>('staf_entitas');
   let editRole = $state<UserRole>('staf_entitas');
 
@@ -49,11 +49,13 @@
     if (!editing || editRole === editing.role) return;
     const consequence: Record<UserRole, string> = {
       staf_entitas:
-        'Kehilangan akses ke entitas lain. Harus ditautkan ke entitas agar bisa mengisi laporan.',
+        'Hanya dapat mengisi laporan entitas yang ditautkan di bawah. Kehilangan akses ke entitas lain.',
       direksi:
-        'Dapat membuka periode yang sudah dikunci dan mengelola seluruh administrasi — entitas, template, dan pengguna.',
-      manajer_keuangan: 'Dapat menyetujui, mengunci, dan mengelola transaksi antar-perusahaan.',
-      auditor: 'Membaca seluruh entitas, tidak dapat menulis apa pun.'
+        'Melihat SELURUH entitas dan angka konsolidasi grup, dapat membuka periode yang sudah dikunci, dan mengelola seluruh administrasi — entitas, template, dan pengguna. Penautan entitas tidak lagi berlaku.',
+      manajer_keuangan:
+        'Menyetujui dan mengunci laporan, serta mengelola transaksi antar-perusahaan — tetapi hanya untuk entitas yang ditautkan di bawah. Tidak melihat dasbor konsolidasi grup.',
+      auditor:
+        'Membaca entitas yang ditautkan di bawah beserta jejak audit, tidak dapat menulis apa pun. Tidak melihat dasbor konsolidasi grup.'
     };
     const ok = confirm(
       `Ubah peran ${editing.full_name} dari ${ROLE_LABEL[editing.role]} menjadi ` +
@@ -72,15 +74,18 @@
     </div>
   {/if}
 
-  {#if data.users.some((u) => u.role === 'staf_entitas' && u.is_active && u.entityIds.length === 0)}
+  <!-- Since manajer and auditor became entity-scoped, an unassigned account
+       is no longer only an empty entry form: for them it is an empty
+       application. -->
+  {#if data.users.some((u) => isEntityScopedRole(u.role) && u.is_active && u.entityIds.length === 0)}
     <div
       class="flex items-start gap-3 px-4 py-2.5 bg-warning/10 border border-warning/25 rounded-lg"
       role="status"
     >
       <TriangleAlert size={14} class="text-warning shrink-0 mt-px" />
       <p class="text-[13px] text-warning flex-1 leading-relaxed">
-        Ada staf entitas yang belum ditautkan ke entitas mana pun. Mereka melihat layar input yang
-        kosong sampai ditautkan di sini.
+        Ada pengguna aktif yang belum ditautkan ke entitas mana pun. Selain direksi, setiap peran
+        hanya melihat entitas yang ditugaskan di sini — sampai ditautkan, layar mereka kosong.
       </p>
     </div>
   {/if}
@@ -173,7 +178,7 @@
         setelah ini.
       </p>
 
-      {#if newRole === 'staf_entitas'}
+      {#if isEntityScopedRole(newRole)}
         <fieldset class="border border-border rounded-lg p-3">
           <legend class="text-[11px] font-medium text-muted-foreground px-1">Akses entitas</legend>
           <div class="flex flex-wrap gap-x-4 gap-y-2">
@@ -245,9 +250,9 @@
                 </span>
               </td>
               <td class="py-2.5 px-4">
-                <!-- Meaningful only for entity staff; the rest read every
-                     entity through can_read_all_entities(). -->
-                {#if user.role !== 'staf_entitas'}
+                <!-- "Semua" is direksi and only direksi; every other role
+                     reads exactly the entities listed here. -->
+                {#if !isEntityScopedRole(user.role)}
                   <span class="text-subtle">Semua</span>
                 {:else if user.entityIds.length === 0}
                   <span class="text-warning">belum ditautkan</span>
@@ -353,7 +358,7 @@
           </label>
         </div>
 
-        {#if editRole === 'staf_entitas'}
+        {#if isEntityScopedRole(editRole)}
           <fieldset class="border border-border rounded-lg p-3">
             <legend class="text-[11px] font-medium text-muted-foreground px-1">Akses entitas</legend>
             <div class="flex flex-wrap gap-x-4 gap-y-2">

@@ -32,6 +32,7 @@
   <Sidebar
     role={data.role}
     fullName={data.fullName}
+    theme={data.theme}
     bind:collapsed
     open={menuOpen}
     onclose={() => (menuOpen = false)}

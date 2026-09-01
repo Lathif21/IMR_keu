@@ -1,3 +1,4 @@
+import { parseTheme, THEME_COOKIE } from '$lib/theme';
 import type { LayoutServerLoad } from './$types';
 
 /**
@@ -15,5 +16,11 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => ({
    * the sidebar at the width the user last chose; read after hydration
    * instead, it would visibly jump on every full page load.
    */
-  sidebarCollapsed: cookies.get('sidebar') === 'rail'
+  sidebarCollapsed: cookies.get('sidebar') === 'rail',
+  /**
+   * Also a display preference. `hooks.server.ts` has already written it onto
+   * `<html>`; this copy is only so the toggle renders in the right state
+   * without reading the DOM.
+   */
+  theme: parseTheme(cookies.get(THEME_COOKIE))
 });

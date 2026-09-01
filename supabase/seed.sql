@@ -99,6 +99,18 @@ insert into entities (id, code, legal_name, npwp, business_line, icon_key, theme
   ('e0000000-0000-4000-a000-000000000003', 'TAMBANG', '(nama badan hukum belum dikonfirmasi) - lini tambang', null, 'mining',   'pickaxe', '#F59E0B'),
   ('e0000000-0000-4000-a000-000000000004', 'GARAM',   '(nama badan hukum belum dikonfirmasi) - lini garam',   null, 'salt',     'waves',   '#22C55E');
 
+-- Sejak manajer dan auditor ikut ber-scope per entitas, tabel ini berlaku
+-- untuk setiap peran KECUALI direksi. Staf dev C tetap satu entitas (ILJ)
+-- supaya cakupan yang sempit benar-benar teruji; manajer dan auditor
+-- ditugaskan ke keempat entitas, yaitu akses yang sama dengan yang mereka
+-- miliki sebelum penyempitan, sehingga dev dan tes berangkat dari keadaan
+-- yang sudah dikenal. Cabut satu baris untuk melihat scoping bekerja.
+insert into user_entity_access (user_id, entity_id, granted_by)
+select p.id, e.id, 'a0000000-0000-4000-a000-000000000001'
+from profiles p
+cross join entities e
+where p.role in ('manajer_keuangan', 'auditor');
+
 insert into user_entity_access (user_id, entity_id, granted_by) values
   ('a0000000-0000-4000-a000-000000000003', 'e0000000-0000-4000-a000-000000000001',
    'a0000000-0000-4000-a000-000000000001');

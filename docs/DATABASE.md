@@ -321,7 +321,12 @@ Terverifikasi dengan akun seed:
 | Ditiru | `current_user_role()` | `entities` terlihat |
 |---|---|---|
 | `staf.ilj@example.test` | `staf_entitas` | ILJ saja |
-| `auditor@example.test` | `auditor` | ILJ, AMDK, TAMBANG, GARAM |
+| `auditor@example.test` | `auditor` | ILJ, AMDK, TAMBANG, GARAM — karena seed menugaskan keempatnya, bukan karena perannya |
+
+Sejak migrasi `20250104000000_scope_manager_auditor.sql`, hanya `direksi` yang
+melihat seluruh entitas tanpa penugasan. `manajer_keuangan` dan `auditor`
+ber-scope lewat `user_entity_access` persis seperti `staf_entitas`; cabut satu
+baris dan entitasnya hilang dari hasil di atas.
 
 `rollback` di akhir bukan formalitas. `set local` hanya berlaku sampai
 transaksi selesai, dan mengakhirinya dengan `rollback` memastikan tidak ada
@@ -336,11 +341,23 @@ select tablename, policyname, cmd, qual, with_check
 ```
 
 `qual` adalah klausa `USING` (baris mana yang terlihat), `with_check` adalah
-`WITH CHECK` (baris mana yang boleh ditulis). Empat fungsi pembantu yang
+`WITH CHECK` (baris mana yang boleh ditulis). Lima fungsi pembantu yang
 dipanggil hampir semua policy — `current_user_role()`,
-`can_read_all_entities()`, `can_approve()`, `has_entity_access()` —
-semuanya `SECURITY DEFINER`, supaya policy yang membaca `profiles` tidak
-memicu rekursi RLS.
+`can_read_all_entities()`, `can_read_group_data()`, `can_approve()`,
+`has_entity_access()` — semuanya `SECURITY DEFINER`, supaya policy yang
+membaca `profiles` tidak memicu rekursi RLS.
+
+Dua di antaranya mudah tertukar dan sengaja dipisah:
+
+| Fungsi | Peran | Untuk apa |
+|---|---|---|
+| `can_read_all_entities()` | `direksi` | Cakupan BARIS per entitas. Dipanggil `has_entity_access()`. |
+| `can_read_group_data()` | `direksi`, `manajer_keuangan`, `auditor` | Tabel yang tidak punya `entity_id` sama sekali: `profiles`, `intercompany_transactions`, `audit_log`. |
+
+Cakupan entitas tidak bisa mempersempit tabel yang tidak punya kolom entitas.
+Menggabungkan keduanya akan mencabut nama pengaju dari antrean Persetujuan, dan
+membuat `ic_manage` memberi manajer hak tulis atas baris yang tidak bisa ia
+baca kembali.
 
 ---
 
