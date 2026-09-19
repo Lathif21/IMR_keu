@@ -189,10 +189,23 @@ berbeda, salah satunya hilang begitu saja.
 Yang harus menyusul di sisi Laravel supaya keputusan ini benar-benar berlaku,
 bukan sekadar tertulis di sini:
 
-- hentikan pembuatan baris "Gaji Admin Bulanan" di `gaji_telly`
-  (`LaporanController` baris 403) — gaji admin dicatat sebagai `pengeluaran`
-- ganti `max(totalGajiAllKaryawan, $gajiPengeluaran)` di baris 1745 menjadi
-  penjumlahan biasa, setelah tidak ada lagi baris yang tumpang tindih
+- **pindahkan pencatatan gaji admin ke `pengeluaran`.** Belum dikerjakan:
+  mengubahnya berarti mengubah cara admin operasional bekerja, dan itu
+  keputusan pemilik sistem, bukan konsekuensi teknis.
+- **ganti `max(totalGajiAllKaryawan, $gajiPengeluaran)` di baris 1745 menjadi
+  penjumlahan.** Baru aman setelah butir di atas selesai; selama gaji admin
+  masih di kedua tempat, `max()` justru yang mencegah hitung ganda.
+
+Dua hal di sekitarnya sudah diperbaiki, dan keduanya bukan soal kebijakan:
+
+- Baris "Gaji Admin Bulanan" dulu dibuat saat halaman honor telly **dibuka** —
+  sebuah GET yang menulis ke database, sehingga satu penyegaran halaman sudah
+  menghasilkan satu baris gaji nol. Sekarang barisnya lahir saat disimpan.
+- `created_at` baris itu dikirim lewat `GajiTelly::create()` padahal tidak ada
+  di `$fillable`, jadi selalu dibuang diam-diam dan diisi `now()`. Penanda
+  bulan satu-satunya yang dimiliki baris gaji admin karena itu tidak pernah
+  benar — dan itulah asal-usul fallback "jumlahkan semua baris" di laporan
+  gaji. Sekarang nilainya di-set pada model, sehingga bertahan.
 
 Sampai keduanya dikerjakan, endpoint tetap aman: `COGS_TELLY` sudah menyaring
 baris gaji admin keluar, jadi angkanya benar meski Laravel masih menyimpannya
