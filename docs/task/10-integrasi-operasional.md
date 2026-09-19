@@ -434,6 +434,7 @@ membaca dokumen ini setahun lagi tahu bahwa ini dipilih, bukan kebetulan.
 | 3 | upah telly hanya di `gaji_telly`, gaji lain hanya di `pengeluaran` | `max()` menebak; satu rumah per nominal menghapus risiko hitung ganda |
 | 4 | tambahkan kolom `source` di `report_lines` | tanpa itu, angka hasil tarik dan angka yang sudah dikoreksi tidak bisa dibedakan |
 | 5 | nama legal ILJ mengikuti sistem operasional: **PT Indo Moda Raya** | nama itu yang tercetak di dokumen yang sampai ke pelanggan |
+| 6 | `entities.npwp` dibiarkan kosong | kolom kosong terbaca "belum ada"; nomor yang belum diverifikasi terbaca "sudah ada" |
 
 Keputusan 1 dan 2 mengandaikan admin operasional mengisi `operasional_rekap`
 dengan disiplin. Kalau di lapangan ternyata tidak, `jumlah_sumber.rekap` dan
@@ -452,10 +453,12 @@ sudah diverifikasi.
 
 ## Belum diputuskan
 
-**NPWP ILJ.** Belum diketahui, dan `entities.npwp` masih `null`. Nama
-legalnya sudah diselaraskan (lihat keputusan 5 di bawah); NPWP-nya menyusul
-dari sumber yang sama.
+**NPWP ILJ.** Dikosongkan, dan itu keputusan, bukan kelalaian:
+`entities.npwp` tetap `null` sampai ada sumber yang bisa dirujuk. Mengisinya
+dengan nomor yang belum diverifikasi lebih buruk daripada membiarkannya
+kosong — kolom kosong terbaca sebagai "belum ada", nomor yang salah terbaca
+sebagai "sudah ada".
 
-Sampai nomornya ada, tidak ada laporan yang bisa dipakai untuk keperluan
-pajak — hanya untuk pelaporan internal. Itu batasan yang perlu diketahui
-sebelum ada yang mengirimkannya ke luar.
+Akibatnya laporan dari sistem ini hanya untuk pelaporan internal, bukan untuk
+keperluan pajak. Itu batasan yang perlu diketahui sebelum ada yang
+mengirimkannya ke luar.

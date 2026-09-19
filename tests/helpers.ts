@@ -132,6 +132,8 @@ export async function closeDb(): Promise<void> {
  * run `npm run db:reset` once before `npm test`.
  */
 export async function resetFixture(): Promise<void> {
+  await snapshotTemplates();
+
   await sql(`
     truncate table
       audit_log,
@@ -143,6 +145,8 @@ export async function resetFixture(): Promise<void> {
     restart identity cascade;
   `);
 
+  await restoreTemplates();
+
   /**
    * Cascades through profiles, identities and every live session. Tokens
    * handed out before a reset stop working, which is why `signIn()` has to
@@ -151,6 +155,54 @@ export async function resetFixture(): Promise<void> {
   await sql('truncate table auth.users cascade;');
 
   await sql(readFileSync('supabase/seed.sql', 'utf8'));
+}
+
+/**
+ * Templates are created by the migrations, not by the seed, so truncating the
+ * seed's tables leaves them behind — and several tests change them for good:
+ * the swap tests reorder `sort_order`, the audit test rewrites a `section`,
+ * and one of them creates a whole extra template.
+ *
+ * The result was a suite that passed once and failed on the next run without
+ * an intervening `db:reset`, with four failures that looked like real
+ * regressions and were not. A suite that only holds on a freshly reset
+ * database is a suite nobody can trust twice.
+ *
+ * So the first reset of a session copies both tables aside, and every reset
+ * afterwards restores from that copy.
+ *
+ * The copy is made with plain `create table as`, inside the database itself,
+ * which is what makes it self-correcting: `supabase db reset` recreates the
+ * whole database and takes the copy with it, so the next snapshot is taken
+ * from a freshly migrated — and therefore pristine — state.
+ */
+async function snapshotTemplates(): Promise<void> {
+  const [existing] = await sql<{ ada: string | null }>(
+    "select to_regclass('public._fixture_templates')::text as ada"
+  );
+  if (existing.ada !== null) return;
+
+  await sql('create table _fixture_templates as select * from report_templates;');
+  await sql('create table _fixture_template_lines as select * from report_template_lines;');
+}
+
+/**
+ * Restores both tables from the snapshot.
+ *
+ * Deleting the templates cascades to their lines, which also removes any
+ * extra template a test created. Run after the truncate above, because
+ * `periods.template_id` still references these rows until the periods are
+ * gone.
+ *
+ * The delete and insert fire the audit triggers, so `audit_log` is cleared
+ * again afterwards — a test that counts audit rows must not see the harness's
+ * own bookkeeping.
+ */
+async function restoreTemplates(): Promise<void> {
+  await sql('delete from report_templates;');
+  await sql('insert into report_templates select * from _fixture_templates;');
+  await sql('insert into report_template_lines select * from _fixture_template_lines;');
+  await sql('truncate table audit_log;');
 }
 
 // ---------------------------------------------------------------------------
