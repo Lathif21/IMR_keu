@@ -180,11 +180,19 @@ export async function periodId(code: string, period: string): Promise<string> {
   return rows[0].id;
 }
 
-/** The active trucking template every seeded period uses. */
+/**
+ * The active trucking template every seeded period uses.
+ *
+ * Chosen by business line and version, not by code. That is what
+ * `entry/+page.server.ts` does when it creates a period, so a new template
+ * version moves the fixtures along with the application instead of leaving
+ * the suite testing a template nothing creates periods on any more.
+ */
 export async function templateId(): Promise<string> {
   const rows = await sql<{ id: string }>(
-    "select id from report_templates where code = 'TRUCKING_V1' and is_active order by version desc limit 1"
+    "select id from report_templates where business_line = 'trucking' and is_active order by version desc limit 1"
   );
+  if (rows.length === 0) throw new Error('Tidak ada template trucking yang aktif');
   return rows[0].id;
 }
 
