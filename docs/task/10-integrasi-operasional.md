@@ -433,6 +433,7 @@ membaca dokumen ini setahun lagi tahu bahwa ini dipilih, bukan kebetulan.
 | 2 | `COGS_SAKU`/`COGS_TERPAL` ikut aturan layar: transaksi bila > 0, kalau tidak rekap | angka portal harus sama dengan Laporan Operasional; menjumlahkan keduanya menghitung ganda |
 | 3 | upah telly hanya di `gaji_telly`, gaji lain hanya di `pengeluaran` | `max()` menebak; satu rumah per nominal menghapus risiko hitung ganda |
 | 4 | tambahkan kolom `source` di `report_lines` | tanpa itu, angka hasil tarik dan angka yang sudah dikoreksi tidak bisa dibedakan |
+| 5 | nama legal ILJ mengikuti sistem operasional: **PT Indo Moda Raya** | nama itu yang tercetak di dokumen yang sampai ke pelanggan |
 
 Keputusan 1 dan 2 mengandaikan admin operasional mengisi `operasional_rekap`
 dengan disiplin. Kalau di lapangan ternyata tidak, `jumlah_sumber.rekap` dan
@@ -443,10 +444,18 @@ saat tutup tahun.
 Keputusan 3 baru tuntas setelah dua perubahan di sisi Laravel yang disebut di
 "Gaji tercatat di dua tempat" dikerjakan.
 
+Keputusan 5 diambil tanpa membaca akta. Nama di invoice tidak selalu nama di
+akta, dan laporan keuangan memakai yang di akta — jadi ini yang pertama
+ditinjau ulang begitu ada urusan pajak, bersama `entities.npwp` yang masih
+kosong. `CONTEXT.md` mencatat dasarnya supaya tidak terbaca sebagai fakta yang
+sudah diverifikasi.
+
 ## Belum diputuskan
 
-**Nama legal dan NPWP ILJ.** `CONTEXT.md` mencatat "PT Indra Langgeng Jaya",
-sistem operasional mencetak "PT Indo Moda Raya". Pemilik sistem
-mengonfirmasi keduanya entitas yang sama; nama mana yang resmi belum
-dipastikan. `entities.legal_name`, `entities.npwp`, dan CONTEXT.md diselaraskan
-setelah itu jelas.
+**NPWP ILJ.** Belum diketahui, dan `entities.npwp` masih `null`. Nama
+legalnya sudah diselaraskan (lihat keputusan 5 di bawah); NPWP-nya menyusul
+dari sumber yang sama.
+
+Sampai nomornya ada, tidak ada laporan yang bisa dipakai untuk keperluan
+pajak — hanya untuk pelaporan internal. Itu batasan yang perlu diketahui
+sebelum ada yang mengirimkannya ke luar.

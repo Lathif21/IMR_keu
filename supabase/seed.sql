@@ -4,7 +4,7 @@
 --  `supabase db reset` runs this after the migrations.
 --
 --  What is real:
---    - PT Indra Langgeng Jaya (ILJ) — the one confirmed entity (CONTEXT.md)
+--    - PT Indo Moda Raya (ILJ) — the one confirmed entity (CONTEXT.md)
 --    - ILJ's Jul 2025 net result of -Rp2.178.807, and the fact that
 --      Jan-Mar PPh 23 of Rp21,3jt landed in that month (ASSUMPTIONS.md A-4)
 --    - COGS_REKANAN at ~83% of REV_TAGIHAN (CONTEXT.md)
@@ -36,6 +36,11 @@ set local request.jwt.claims = '{"sub":"a0000000-0000-4000-a000-000000000001","r
 --  environment, and none of it is displayed in the app — the prototype
 --  printed logins on its login screen (see CLAUDE.md anti-patterns).
 
+-- crypt()/gen_salt() are schema-qualified because pgcrypto lives in the
+-- `extensions` schema on hosted Supabase, which is not on the search_path
+-- during a seed run. Unqualified calls work locally and then fail with
+-- "function gen_salt(unknown) does not exist" against a hosted project.
+
 -- confirmation_token, recovery_token, email_change_token_new and
 -- email_change have no column default, so they land NULL. GoTrue scans them
 -- into non-nullable Go strings and the whole login fails with the unhelpful
@@ -49,19 +54,19 @@ insert into auth.users (
 values
   ('a0000000-0000-4000-a000-000000000001', '00000000-0000-0000-0000-000000000000',
    'authenticated', 'authenticated', 'direksi@example.test',
-   crypt('devpassword', gen_salt('bf')), now(), now(), now(),
+   extensions.crypt('devpassword', extensions.gen_salt('bf')), now(), now(), now(),
    '{"provider":"email","providers":["email"]}', '{}', '', '', '', ''),
   ('a0000000-0000-4000-a000-000000000002', '00000000-0000-0000-0000-000000000000',
    'authenticated', 'authenticated', 'manajer@example.test',
-   crypt('devpassword', gen_salt('bf')), now(), now(), now(),
+   extensions.crypt('devpassword', extensions.gen_salt('bf')), now(), now(), now(),
    '{"provider":"email","providers":["email"]}', '{}', '', '', '', ''),
   ('a0000000-0000-4000-a000-000000000003', '00000000-0000-0000-0000-000000000000',
    'authenticated', 'authenticated', 'staf.ilj@example.test',
-   crypt('devpassword', gen_salt('bf')), now(), now(), now(),
+   extensions.crypt('devpassword', extensions.gen_salt('bf')), now(), now(), now(),
    '{"provider":"email","providers":["email"]}', '{}', '', '', '', ''),
   ('a0000000-0000-4000-a000-000000000004', '00000000-0000-0000-0000-000000000000',
    'authenticated', 'authenticated', 'auditor@example.test',
-   crypt('devpassword', gen_salt('bf')), now(), now(), now(),
+   extensions.crypt('devpassword', extensions.gen_salt('bf')), now(), now(), now(),
    '{"provider":"email","providers":["email"]}', '{}', '', '', '', '');
 
 -- GoTrue needs a matching identity row before password login works.
@@ -94,7 +99,7 @@ insert into profiles (id, full_name, role, phone) values
 --  component inside a data object, which cannot be serialised.
 
 insert into entities (id, code, legal_name, npwp, business_line, icon_key, theme_color) values
-  ('e0000000-0000-4000-a000-000000000001', 'ILJ',     'PT Indra Langgeng Jaya',                               null, 'trucking', 'truck',   '#3B82F6'),
+  ('e0000000-0000-4000-a000-000000000001', 'ILJ',     'PT Indo Moda Raya',                                    null, 'trucking', 'truck',   '#3B82F6'),
   ('e0000000-0000-4000-a000-000000000002', 'AMDK',    '(nama badan hukum belum dikonfirmasi) - lini AMDK',    null, 'amdk',     'droplet', '#8B5CF6'),
   ('e0000000-0000-4000-a000-000000000003', 'TAMBANG', '(nama badan hukum belum dikonfirmasi) - lini tambang', null, 'mining',   'pickaxe', '#F59E0B'),
   ('e0000000-0000-4000-a000-000000000004', 'GARAM',   '(nama badan hukum belum dikonfirmasi) - lini garam',   null, 'salt',     'waves',   '#22C55E');
@@ -219,5 +224,30 @@ update periods
  where id in ('d0000000-0000-4000-a000-000000000001',
               'd0000000-0000-4000-a000-000000000002',
               'd0000000-0000-4000-a000-000000000003');
+
+
+-- =====================================================================
+--  6. TAUTAN KE SISTEM OPERASIONAL
+--
+--  Tanpa baris ini tombol "Tarik data operasional" tidak muncul sama
+--  sekali di layar input, jadi fitur yang baru dibangun tidak pernah
+--  terlihat di lingkungan pengembangan.
+--
+--  Alamatnya sengaja alamat dev. `php artisan serve` di repo
+--  LaporanKeuangan mendengarkan di sana. Di produksi, direksi
+--  menggantinya lewat /admin — kolomnya memang dibuat untuk diubah tanpa
+--  menghapus barisnya, dan perubahannya tercatat di audit_log.
+--
+--  Tidak ada token di sini. Token tinggal di $env/static/private; yang
+--  tidak pernah masuk database tidak bisa bocor lewat RLS yang salah
+--  tulis.
+--
+--  Hanya ILJ. Tiga entitas lain belum punya sistem operasional.
+-- =====================================================================
+
+set local request.jwt.claims = '{"sub":"a0000000-0000-4000-a000-000000000001","role":"authenticated"}';
+
+insert into operational_sync_config (entity_id, base_url) values
+  ('e0000000-0000-4000-a000-000000000001', 'http://localhost:8000');
 
 commit;
