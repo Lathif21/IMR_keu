@@ -1,6 +1,7 @@
 <script lang="ts">
   import ArrowLeft from 'lucide-svelte/icons/arrow-left';
   import Check from 'lucide-svelte/icons/check';
+  import Download from 'lucide-svelte/icons/download';
   import Lock from 'lucide-svelte/icons/lock';
   import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
   import { enhance } from '$app/forms';
@@ -222,6 +223,63 @@
     );
     if (!ok) event.preventDefault();
   }
+
+  /** Tombol tarik data hanya ada bila entitasnya memang ditautkan. */
+  const canPull = $derived(editable && data.operationalSync);
+
+  const SOURCE_LABEL: Record<string, string> = {
+    invoice: 'invoice',
+    transaksi: 'transaksi',
+    rekap: 'rekap bulanan',
+    pengeluaran: 'pengeluaran',
+    gaji_telly: 'baris gaji telly'
+  };
+
+  /**
+   * "26 invoice · 140 transaksi · 12 rekap bulanan".
+   *
+   * Bukan hiasan: angka yang ditarik dari nol invoice terlihat sama persis
+   * dengan angka yang ditarik dari dua puluh enam invoice sampai ada yang
+   * menghitungnya. Ini satu-satunya tempat penginput bisa melihat bedanya.
+   */
+  function describeSources(sources: Record<string, number> | undefined): string {
+    if (!sources) return '';
+    return Object.entries(sources)
+      .map(([key, count]) => `${count} ${SOURCE_LABEL[key] ?? key}`)
+      .join(' · ');
+  }
+
+  /**
+   * Tarik data menimpa angka yang sudah ada — termasuk koreksi yang baru
+   * diketik. Menimpa pekerjaan orang tanpa bertanya adalah cara tercepat
+   * membuat tombol ini tidak dipercaya, jadi ia bertanya dulu. Formulir yang
+   * masih kosong tidak ditanyakan: tidak ada yang bisa hilang.
+   */
+  function confirmOverwrite(event: MouseEvent) {
+    if (allZero) return;
+    const ok = confirm(
+      'Sebagian baris sudah terisi. Tarik data akan mengganti angkanya dengan angka dari sistem operasional. Lanjutkan?'
+    );
+    if (!ok) event.preventDefault();
+  }
+
+  /**
+   * Setelah tarik data berhasil, nilai di layar harus ikut berubah.
+   *
+   * Periodenya tidak berganti, jadi penjaga `seededFor` di atas tidak akan
+   * menyemai ulang — dan layar akan menampilkan angka lama di atas data baru,
+   * yang adalah kegagalan terburuk yang mungkin: terlihat berhasil, isinya
+   * salah. `update()` sudah menjalankan `load` ulang, jadi `data` di sini
+   * sudah berisi baris yang baru ditulis.
+   */
+  const reseedAfterPull: SubmitFunction = () => {
+    return async ({ update, result }) => {
+      await update({ reset: false });
+      if (result.type !== 'success') return;
+      amounts = seedAmounts(data);
+      notes = seedNotes(data);
+    };
+  };
 </script>
 
 <svelte:head>
@@ -249,6 +307,31 @@
         </p>
       </div>
     </div>
+
+    <!-- Form tersendiri, di luar form input di bawah. Form tidak boleh
+         bersarang, dan menumpangkannya sebagai formaction ketiga akan membuat
+         Enter di kolom nominal punya satu kandidat tambahan untuk dipilih. -->
+    {#if canPull}
+      <form
+        method="POST"
+        action="?/tarikOperasional"
+        use:enhance={reseedAfterPull}
+        class="shrink-0"
+      >
+        <input type="hidden" name="entitas" value={data.selected.code} />
+        <button
+          type="submit"
+          onclick={confirmOverwrite}
+          title="Ambil angka bulan ini dari sistem operasional ILJ"
+          class="px-3 py-1.5 rounded-lg bg-card border border-border text-[12px] font-medium
+                 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors
+                 flex items-center gap-1.5"
+        >
+          <Download size={12} />
+          Tarik data operasional
+        </button>
+      </form>
+    {/if}
   </div>
 
   {#if !editable}
@@ -292,6 +375,41 @@
         Draft tersimpan. Baris bernilai 0 tanpa catatan tidak disimpan.
       </p>
     </div>
+  {:else if form?.pulled}
+    <div class="px-5 py-2.5 bg-positive/10 border-b border-positive/25 shrink-0" role="status">
+      <p class="text-[12px] text-positive leading-relaxed">
+        {form.lineCount} baris ditarik dari sistem operasional
+        <!-- Jam dipotong dari string ISO, bukan lewat toLocaleString(). Server
+             dan browser bisa berada di zona waktu berbeda, dan angka jam yang
+             berubah saat hidrasi adalah persis jenis ketidakcocokan yang
+             membuat orang meragukan angka di sebelahnya. -->
+        {#if form.computedAt}pukul {form.computedAt.slice(11, 16)}{/if}. Angka ini masih draft
+        dan masih bisa dikoreksi sebelum diajukan.
+      </p>
+      {#if describeSources(form.sources)}
+        <p class="text-[11px] text-muted-foreground mt-1">
+          Dihitung dari {describeSources(form.sources)}.
+        </p>
+      {/if}
+    </div>
+
+    <!-- Peringatan, bukan kegagalan: barisnya sudah tertulis. Rute yang hanya
+         punya rekap manual tetap menyumbang uang saku dan terpal, tetapi
+         operasional_rekap tidak punya kolom pendapatan — jadi bagian rekanan
+         untuk rute itu nol, dan iuran paguyubannya tidak ada sama sekali. -->
+    {#if form.rekapOnlyRoutes && form.rekapOnlyRoutes.length > 0}
+      <div
+        class="px-5 py-2.5 bg-warning/10 border-b border-warning/25 shrink-0"
+        role="status"
+      >
+        <p class="text-[12px] text-warning leading-relaxed">
+          <span class="font-semibold">Periksa Bagian Rekanan dan Iuran Paguyuban.</span>
+          {form.rekapOnlyRoutes.length} rute bulan ini hanya punya rekap bulanan tanpa transaksi,
+          sehingga kedua pos itu tidak terisi untuk rute tersebut:
+          {form.rekapOnlyRoutes.map((r) => `${r.kapal} (${r.rute})`).join(', ')}.
+        </p>
+      </div>
+    {/if}
   {/if}
 
   <form

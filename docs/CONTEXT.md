@@ -57,7 +57,7 @@ Always carry `is_complete` and `missing_entities` alongside any group total.
 
 | Code | Legal name | Line | Notes |
 |---|---|---|---|
-| ILJ | PT Indra Langgeng Jaya | trucking | Only entity with real historical data (Nov 2024 – Jul 2025) |
+| ILJ | PT Indo Moda Raya | trucking | Only entity with real historical data (Nov 2024 – Jul 2025). Legal name follows what the operational system prints on documents that reach customers; the deed has not been read. `npwp` stays null until it has. |
 | — | *(to confirm)* | amdk | Bottled water manufacturing |
 | — | *(to confirm)* | mining | |
 | — | *(to confirm)* | salt | Legal form unconfirmed — may not be a PT |
