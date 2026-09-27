@@ -30,7 +30,6 @@
     "xlsx": "^0.18.5"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.3",
     "lucide-svelte": "^1.0.1"
   }
