@@ -13,6 +13,7 @@ Read these before writing code:
 | [docs/TESTING.md](docs/TESTING.md) | What is still checked by hand, after `npm test`: session handling and the dashboard. |
 | [docs/TESTING-WORKFLOW.md](docs/TESTING-WORKFLOW.md) | The two write screens, walked end to end. |
 | [docs/TESTING-PHASE2.md](docs/TESTING-PHASE2.md) | Fase 2 on screen: the P&L report, entity isolation, and the ILJ import. |
+| [docs/TESTING-INTEGRASI.md](docs/TESTING-INTEGRASI.md) | The operational system → portal pull, tested end to end on screen with Playwright. |
 | [docs/DATABASE.md](docs/DATABASE.md) | Inspecting the schema in DBeaver: tables, relations, triggers, and why RLS looks absent there. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What exists, what does not, and what comes next. |
 
