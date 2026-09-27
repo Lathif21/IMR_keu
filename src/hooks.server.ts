@@ -1,50 +1,38 @@
-import { createServerClient } from '@supabase/ssr';
+import { createClient } from '@supabase/supabase-js';
 import { redirect, type Handle } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
-import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/public';
+import { NEON_DATA_API_URL } from '$env/static/private';
 import type { UserRole } from '$lib/domain';
+import { getSession, SESSION_COOKIE } from '$lib/server/neon-auth';
 import { parseTheme, THEME_COOKIE } from '$lib/theme';
 
 /**
- * One Supabase client per request, carrying the caller's cookies. Every query
+ * One Data API client per request, carrying the caller's JWT. Every query
  * therefore runs as that user and RLS decides what comes back — which is
  * where authorization lives (CLAUDE.md invariant 1).
+ *
+ * The Data API speaks PostgREST, so `supabase-js` queries work unchanged;
+ * only its auth half is unused. The session cookie is checked against Neon
+ * Auth on every request — its content proves nothing by itself — and that
+ * check is what yields the JWT.
  */
 const supabase: Handle = async ({ event, resolve }) => {
-  event.locals.supabase = createServerClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll: () => event.cookies.getAll(),
-      setAll: (cookiesToSet) => {
-        for (const { name, value, options } of cookiesToSet) {
-          // SvelteKit requires an explicit path; Supabase leaves it implicit.
-          event.cookies.set(name, value, { ...options, path: '/' });
-        }
-      }
-    }
+  const token = event.cookies.get(SESSION_COOKIE) ?? null;
+  const auth = token ? await getSession(event.url.origin, token) : null;
+
+  if (token && !auth) {
+    // Expired, revoked or banned: drop it so the next request is clean.
+    event.cookies.delete(SESSION_COOKIE, { path: '/' });
+  }
+
+  event.locals.session = auth ? token : null;
+  event.locals.user = auth?.user ?? null;
+  event.locals.supabase = createClient(NEON_DATA_API_URL, 'neon-data-api', {
+    accessToken: async () => auth?.jwt ?? null
   });
 
-  /**
-   * `getSession()` alone reads an unverified JWT out of a cookie the user
-   * controls. Nothing may depend on it until `getUser()` has checked the
-   * signature against the auth server.
-   */
-  event.locals.safeGetSession = async () => {
-    const {
-      data: { session }
-    } = await event.locals.supabase.auth.getSession();
-    if (!session) return { session: null, user: null };
-
-    const {
-      data: { user },
-      error
-    } = await event.locals.supabase.auth.getUser();
-    if (error) return { session: null, user: null };
-
-    return { session, user };
-  };
-
   return resolve(event, {
-    filterSerializedResponseHeaders: (name) => name === 'content-range' || name === 'x-supabase-api-version'
+    filterSerializedResponseHeaders: (name) => name === 'content-range'
   });
 };
 
@@ -52,9 +40,7 @@ const supabase: Handle = async ({ event, resolve }) => {
 const PUBLIC_ROUTES = ['/login', '/auth'];
 
 const authGuard: Handle = async ({ event, resolve }) => {
-  const { session, user } = await event.locals.safeGetSession();
-  event.locals.session = session;
-  event.locals.user = user;
+  const { session, user } = event.locals;
   event.locals.role = null;
   event.locals.fullName = null;
 

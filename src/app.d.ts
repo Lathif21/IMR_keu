@@ -1,19 +1,23 @@
-import type { SupabaseClient, Session, User } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { UserRole } from '$lib/domain';
+import type { AuthUser } from '$lib/server/neon-auth';
 
 declare global {
   namespace App {
     interface Locals {
-      /** Request-scoped client. Every query runs under the caller's RLS. */
+      /**
+       * Request-scoped Data API client. Every query runs under the caller's
+       * RLS. Only its query half is used; auth goes through
+       * `$lib/server/neon-auth`.
+       */
       supabase: SupabaseClient;
       /**
-       * Validates the JWT against the auth server. Use this, never
-       * `getSession()` alone — the cookie is user-controlled and its
-       * unverified payload must not gate anything.
+       * The Neon Auth session token, already verified against the auth server
+       * in `hooks.server.ts`. Null when there is no valid session. Passed back
+       * to Neon Auth by /admin/users, which acts on the director's authority.
        */
-      safeGetSession(): Promise<{ session: Session | null; user: User | null }>;
-      session: Session | null;
-      user: User | null;
+      session: string | null;
+      user: AuthUser | null;
       /**
        * Read from `profiles`, for UI shaping only. Authorization is RLS —
        * see CLAUDE.md invariant 1. Never branch on this to permit a write.

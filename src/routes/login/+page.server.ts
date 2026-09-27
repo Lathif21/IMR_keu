@@ -1,4 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { SESSION_COOKIE, signIn } from '$lib/server/neon-auth';
 import type { Actions } from './$types';
 
 /**
@@ -32,7 +33,7 @@ function safeRedirect(requested: string | null, origin: string): string {
  * working logins on its login screen (see CLAUDE.md anti-patterns).
  */
 export const actions: Actions = {
-  default: async ({ request, url, locals }) => {
+  default: async ({ request, url, cookies }) => {
     const form = await request.formData();
     const email = String(form.get('email') ?? '').trim();
     const password = String(form.get('password') ?? '');
@@ -41,13 +42,29 @@ export const actions: Actions = {
       return fail(400, { email, message: 'Email dan kata sandi wajib diisi.' });
     }
 
-    const { error } = await locals.supabase.auth.signInWithPassword({ email, password });
+    let session: string | null;
+    try {
+      session = await signIn(url.origin, email, password);
+    } catch (cause) {
+      console.error('[login] Neon Auth:', (cause as Error).message);
+      return fail(502, { email, message: 'Layanan login sedang tidak dapat dihubungi. Coba lagi.' });
+    }
 
-    if (error) {
-      // Deliberately not distinguishing "unknown email" from "wrong password":
-      // that difference tells an attacker which addresses exist.
+    if (!session) {
+      // Deliberately not distinguishing "unknown email" from "wrong password"
+      // (or a banned account): that difference tells an attacker which
+      // addresses exist.
       return fail(400, { email, message: 'Email atau kata sandi tidak sesuai.' });
     }
+
+    cookies.set(SESSION_COOKIE, session, {
+      path: '/',
+      httpOnly: true,
+      secure: url.protocol === 'https:',
+      sameSite: 'lax',
+      // Neon Auth sessions last seven days; the cookie does not outlive them.
+      maxAge: 60 * 60 * 24 * 7
+    });
 
     redirect(303, safeRedirect(url.searchParams.get('redirectTo'), url.origin));
   }

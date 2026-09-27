@@ -18,12 +18,31 @@ Read these before writing code:
 
 ## Stack
 
-SvelteKit (SSR) + TypeScript · Supabase (Postgres, Auth, RLS) · Tailwind v4.
-`supabase-js` is called directly — no ORM, no repository layer.
+SvelteKit (SSR) + TypeScript · Neon (Postgres, Neon Auth, Data API, RLS) ·
+Tailwind v4. `supabase-js` is called directly against the Neon Data API, which
+speaks PostgREST — no ORM, no repository layer. Only its query half is used;
+login and account administration go through `src/lib/server/neon-auth.ts`.
+
+Production runs on the `imr_keu` database of the Neon project `IMR`. Neon Auth
+keeps users in `neon_auth."user"`, and `auth.uid()` reads the JWT's `sub`
+exactly as on Supabase, so the migrations and every RLS policy are shared by
+both. Apply them to Neon with:
+
+```sh
+NEON_DATABASE_URL=postgres://... npx tsx scripts/neon-migrate.ts --bootstrap
+```
+
+The script rewrites the one Supabase-only reference (`auth.users`) on the fly
+and records what it applied; `--bootstrap` adds the four entities and the
+operational sync link from `supabase/neon-bootstrap.sql`.
 
 ## Running it locally
 
-Requires Node 20+, Docker Desktop, and the Supabase CLI.
+`npm run dev` talks to Neon, using `NEON_AUTH_BASE_URL` and
+`NEON_DATA_API_URL` from `.env` (Neon Auth accepts `localhost` origins).
+
+The test suite and the seeded accounts below still use a local Supabase stack,
+which needs Node 20+, Docker Desktop, and the Supabase CLI.
 
 ```sh
 npm install
@@ -74,11 +93,17 @@ history whose actors have vanished is not a history. Deactivating is the way
 out, and `current_user_role()` filters `is_active`, so a deactivated account
 loses everything immediately — even with a session still in flight.
 
-**The service role key is used by exactly one screen**, `/admin/users`, and only
-inside `+page.server.ts`. It is read through `$env/static/private` so SvelteKit
-refuses to bundle it into client code, and the client is built per request
-rather than kept as a module singleton. Verified after `npm run build`: the key
-appears in one server chunk and in zero of the client bundle's files.
+**There is no service key.** `/admin/users` calls Neon Auth's admin API with
+the director's own session, and Neon Auth accepts it only from users whose auth
+role is `admin`. That role is kept in step with `profiles.role`: only directors
+hold it, a role change updates it, and deactivating an account bans it in Neon
+Auth, which also ends its sessions. Without that, a demoted or deactivated
+director could still reset other people's passwords by calling the auth API
+directly — RLS never sees that call.
+
+Public sign-up is disabled in Neon Auth (`disable_sign_up`), and the portal's
+domain must be a trusted domain there, or every auth call fails with
+`INVALID_ORIGIN`.
 
 ## Scripts
 

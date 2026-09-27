@@ -1,9 +1,8 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { createClient, type PostgrestError, type SupabaseClient } from '@supabase/supabase-js';
-import { PUBLIC_SUPABASE_URL } from '$env/static/public';
-import { SUPABASE_SERVICE_ROLE_KEY } from '$env/static/private';
+import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import type { UserRole } from '$lib/domain';
 import { isEntityScopedRole } from '$lib/roles';
+import { admin, authRoleFor, NeonAuthError } from '$lib/server/neon-auth';
 import type { Actions, PageServerLoad } from './$types';
 
 export interface AdminProfile {
@@ -18,21 +17,21 @@ const ROLES: UserRole[] = ['direksi', 'manajer_keuangan', 'staf_entitas', 'audit
 const MIN_PASSWORD = 8;
 
 /**
- * The only place in the application that holds the service role key.
+ * Account operations run on the director's own authority: Neon Auth accepts
+ * them only from a session whose auth role is `admin`, which only active
+ * directors hold. There is no service key in this application.
  *
- * Built per request, never as a module singleton: a singleton is one accidental
- * `export` away from being importable somewhere it has no business being, and
- * it keeps a bypass-everything client alive for the lifetime of the process.
- *
- * `$env/static/private` is what stops this reaching the browser — SvelteKit
- * refuses to bundle it into client code. That refusal is the last line of
- * defence, not the first: nothing below ever returns a raw auth user, and no
- * password is ever logged or sent back.
+ * Nothing below ever returns a raw auth user, and no password is ever logged
+ * or sent back.
  */
-function adminClient(): SupabaseClient {
-  return createClient(PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+function authority(locals: App.Locals, url: URL): { origin: string; session: string } {
+  if (!locals.session) redirect(303, '/login');
+  return { origin: url.origin, session: locals.session };
+}
+
+function authFailure(context: string, cause: unknown): void {
+  const detail = cause instanceof NeonAuthError ? `${cause.status} ${cause.code}` : 'unknown';
+  console.error(`[admin/users] ${context}:`, detail);
 }
 
 function failLoad(context: string, cause: PostgrestError | Error): never {
@@ -105,18 +104,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   if (firstError) failLoad('profile queries', firstError);
 
   /**
-   * Email lives in `auth.users`, which PostgREST does not expose. Only the
-   * address is taken — never the raw user object, which carries tokens and
-   * provider metadata nothing on this screen needs.
+   * Email lives in `neon_auth.user`, which the Data API does not expose. Only
+   * the address is taken — never the raw user object.
    */
+  const { origin, session } = authority(locals, url);
   const emails = new Map<string, string>();
-  const { data: authUsers, error: authError } = await adminClient().auth.admin.listUsers({
-    page: 1,
-    perPage: 200
-  });
-  if (authError) failLoad('listUsers', authError);
-  for (const user of authUsers?.users ?? []) {
-    if (user.email) emails.set(user.id, user.email);
+  try {
+    for (const user of await admin.listUsers(origin, session)) emails.set(user.id, user.email);
+  } catch (cause) {
+    failLoad('listUsers', cause as Error);
   }
 
   const accessByUser = new Map<string, string[]>();
@@ -148,7 +144,7 @@ export const actions: Actions = {
    * `current_user_role()` null, and the person sees an empty application with
    * no explanation — so a failed profile insert takes the auth user with it.
    */
-  createUser: async ({ locals, request }) => {
+  createUser: async ({ locals, request, url }) => {
     const form = await request.formData();
     const email = String(form.get('email') ?? '').trim().toLowerCase();
     const password = String(form.get('password') ?? '');
@@ -164,38 +160,36 @@ export const actions: Actions = {
       return fail(400, { message: `Password minimal ${MIN_PASSWORD} karakter.` });
     }
 
-    const admin = adminClient();
+    const { origin, session } = authority(locals, url);
 
     /**
-     * `email_confirm: true` skips verification. There is no SMTP configured,
-     * and without this the account cannot log in at all — see the security
-     * note in README.md.
+     * Neon Auth does not require email verification (there is no SMTP), so
+     * the account can log in straight away — see the security note in
+     * README.md.
      */
-    const { data: created, error: createError } = await admin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true
-    });
-
-    if (createError || !created?.user) {
-      // The message may name the address; the password is never in it.
-      console.error('[admin/users] createUser:', createError?.message);
-      return fail(400, {
-        message: createError?.message.includes('already')
-          ? 'Email itu sudah terdaftar.'
-          : 'Gagal membuat akun.'
+    let userId: string;
+    try {
+      userId = await admin.createUser(origin, session, {
+        email,
+        password,
+        name: fullName,
+        role: authRoleFor(role)
       });
+    } catch (cause) {
+      authFailure('createUser', cause);
+      const exists = cause instanceof NeonAuthError && /EXISTS/.test(cause.code ?? '');
+      return fail(400, { message: exists ? 'Email itu sudah terdaftar.' : 'Gagal membuat akun.' });
     }
 
     const { error: profileError } = await locals.supabase.from('profiles').insert({
-      id: created.user.id,
+      id: userId,
       full_name: fullName,
       role,
       phone: phone === '' ? null : phone
     });
 
     if (profileError) {
-      await admin.auth.admin.deleteUser(created.user.id);
+      await admin.removeUser(origin, session, userId).catch((cause) => authFailure('rollback', cause));
       return fail(400, {
         message: explain('insert profile', profileError, 'Gagal membuat profil; akun dibatalkan.')
       });
@@ -208,7 +202,7 @@ export const actions: Actions = {
       if (entityIds.length > 0) {
         const { error: accessError } = await locals.supabase.from('user_entity_access').insert(
           entityIds.map((entity_id) => ({
-            user_id: created.user.id,
+            user_id: userId,
             entity_id,
             granted_by: locals.user?.id ?? null
           }))
@@ -229,7 +223,7 @@ export const actions: Actions = {
    * `profiles_manage` already restricts this to direksi, and reaching for a
    * bypass where the policy suffices is how a bypass becomes routine.
    */
-  updateUser: async ({ locals, request }) => {
+  updateUser: async ({ locals, request, url }) => {
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
     const fullName = String(form.get('full_name') ?? '').trim();
@@ -252,6 +246,19 @@ export const actions: Actions = {
       return fail(400, {
         message: explain('update profile', updateError, 'Gagal menyimpan perubahan.')
       });
+    }
+
+    /**
+     * The auth role follows the profile role. A demoted director who kept
+     * `admin` in Neon Auth could still reset other people's passwords by
+     * calling the auth API directly — RLS never sees that call.
+     */
+    const { origin, session } = authority(locals, url);
+    try {
+      await admin.setRole(origin, session, id, authRoleFor(role));
+    } catch (cause) {
+      authFailure('setRole', cause);
+      return fail(500, { message: 'Profil tersimpan, tetapi hak login belum ikut diperbarui. Ulangi.' });
     }
 
     /**
@@ -314,7 +321,7 @@ export const actions: Actions = {
    * with one SQL statement and the culprit is in `audit_log` either way —
    * not yet worth enforcing in the database.
    */
-  toggleActive: async ({ locals, request }) => {
+  toggleActive: async ({ locals, request, url }) => {
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
     const next = form.get('is_active') === 'true';
@@ -338,10 +345,24 @@ export const actions: Actions = {
       });
     }
 
+    /**
+     * RLS already refuses a deactivated profile everything. Banning also ends
+     * their sessions and blocks login, and — for a director — stops their auth
+     * `admin` role from being usable against the auth API.
+     */
+    const { origin, session } = authority(locals, url);
+    try {
+      if (next) await admin.unban(origin, session, id);
+      else await admin.ban(origin, session, id);
+    } catch (cause) {
+      authFailure(next ? 'unban' : 'ban', cause);
+      return fail(500, { message: 'Status tersimpan, tetapi akses login belum ikut diperbarui. Ulangi.' });
+    }
+
     redirect(303, '/admin/users');
   },
 
-  resetPassword: async ({ request }) => {
+  resetPassword: async ({ locals, request, url }) => {
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
     const password = String(form.get('password') ?? '');
@@ -350,11 +371,12 @@ export const actions: Actions = {
       return fail(400, { message: `Password minimal ${MIN_PASSWORD} karakter.` });
     }
 
-    const { error: resetError } = await adminClient().auth.admin.updateUserById(id, { password });
-
-    if (resetError) {
+    const { origin, session } = authority(locals, url);
+    try {
+      await admin.setPassword(origin, session, id, password);
+    } catch (cause) {
       // Deliberately not interpolating anything from the request.
-      console.error('[admin/users] resetPassword failed');
+      authFailure('resetPassword', cause);
       return fail(400, { message: 'Gagal mengganti password.' });
     }
 
