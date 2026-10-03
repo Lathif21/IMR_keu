@@ -87,7 +87,7 @@ Five screens in the export, four of them real:
 | Persetujuan | `/approval` | Queue with expandable review panel |
 | ~~Tampilan Mobile~~ | — | Prototype device-frame preview. Not a route. The real app is responsive down to 360px — verified, not assumed; see `TESTING.md` Part 7. |
 
-Three admin screens exist beyond the Figma export, all behind
+Four admin screens exist beyond the Figma export, all behind
 `/admin/+layout.server.ts` which redirects anyone who is not `direksi`:
 
 | Screen | Route | Notes |
@@ -95,6 +95,7 @@ Three admin screens exist beyond the Figma export, all behind
 | Entitas | `/admin/entities` | Create and edit entities; reporting basis is set through an RPC, never a column write |
 | Template | `/admin/templates` | Versioned; a template used by a non-draft period is frozen and must be duplicated |
 | Pengguna | `/admin/users` | The only screen holding the service role key |
+| Pemetaan Biaya | `/admin/pemetaan-biaya` | Maps operational expense types to report lines; unmapped types land in `OPEX_LAIN` and are named on the entry screen |
 
 Two rules worth carrying in your head before touching them:
 

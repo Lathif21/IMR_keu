@@ -5,7 +5,7 @@ import type { LineSection, Numeric, PeriodStatus } from '$lib/domain';
 import { AMOUNT_LIMIT, MONTH_PATTERN, formatAmount, parseAmountInput } from '$lib/format';
 import { canEnterReports } from '$lib/roles';
 import { loadEntryAccess } from '../access';
-import { fetchRekapOperasional } from './operational';
+import { fetchRekapOperasional, petakanBiaya, type PemetaanBiaya } from './operational';
 import type { Actions, PageServerLoad } from './$types';
 
 interface PeriodRow {
@@ -385,19 +385,26 @@ export const actions: Actions = {
     const { rekap } = hasil;
 
     /**
-     * Jenis pengeluaran yang belum dipetakan menghentikan sinkronisasi
-     * (invarian 8). Tidak ada fallback diam-diam ke OPEX_LAIN: biaya yang
-     * masuk pos karangan lebih buruk daripada tombol yang menolak bekerja,
-     * karena yang pertama tidak pernah ketahuan.
+     * Pengeluaran dan gaji admin datang per jenis; pos laporannya diputuskan
+     * di sini, lewat pemetaan yang diatur direksi di /admin/pemetaan-biaya.
+     *
+     * Kegagalan membaca pemetaan menghentikan tarik data. Melanjutkan dengan
+     * pemetaan kosong akan memasukkan seluruh pengeluaran ke Beban
+     * Operasional Lain — angka yang tampak wajar dan salah.
      */
-    if (rekap.jenis_belum_dipetakan.length > 0) {
-      return fail(409, {
-        message:
-          'Ada jenis pengeluaran yang belum dipetakan ke pos laporan, jadi tidak ada baris yang ditulis: ' +
-          rekap.jenis_belum_dipetakan.join(', ') +
-          '. Minta admin operasional melengkapi pemetaannya.'
+    const { data: pemetaan, error: pemetaanError } = await locals.supabase
+      .from('operational_expense_mapping')
+      .select('source, jenis, line_code')
+      .eq('entity_id', target.entityId)
+      .returns<PemetaanBiaya[]>();
+
+    if (pemetaanError) {
+      return fail(500, {
+        message: explain('operational_expense_mapping', pemetaanError, 'Gagal memuat pemetaan biaya.')
       });
     }
+
+    const terpetakan = petakanBiaya(rekap.baris, rekap.biaya_per_jenis, pemetaan ?? []);
 
     const { data: templateLines, error: templateError } = await locals.supabase
       .from('report_template_lines')
@@ -420,17 +427,17 @@ export const actions: Actions = {
      * lebih buruk daripada gagal seluruhnya. Periksa dulu, tulis sekali.
      */
     const known = new Set((templateLines ?? []).map((line) => line.line_code));
-    const unknown = Object.keys(rekap.baris).filter((code) => !known.has(code));
+    const unknown = Object.keys(terpetakan.baris).filter((code) => !known.has(code));
     if (unknown.length > 0) {
       return fail(409, {
         message:
-          'Sistem operasional mengirim pos yang tidak ada di template periode ini, jadi tidak ada baris yang ditulis: ' +
+          'Ada pos yang tidak ada di template periode ini, jadi tidak ada baris yang ditulis: ' +
           unknown.join(', ') +
-          '. Template mungkin perlu dinaikkan versinya.'
+          '. Periksa pemetaan biaya, atau template mungkin perlu dinaikkan versinya.'
       });
     }
 
-    const rows = Object.entries(rekap.baris).map(([line_code, amount]) => ({
+    const rows = Object.entries(terpetakan.baris).map(([line_code, amount]) => ({
       period_id: target.periodId,
       line_code,
       /**
@@ -474,7 +481,9 @@ export const actions: Actions = {
       computedAt: rekap.dihitung_pada,
       lineCount: rows.length,
       sources: rekap.jumlah_sumber,
-      rekapOnlyRoutes: rekap.rute_rekap_saja
+      rekapOnlyRoutes: rekap.rute_rekap_saja,
+      unmappedExpenses: terpetakan.belumDipetakan,
+      skippedExpenses: terpetakan.tidakDitarik
     };
   },
 
