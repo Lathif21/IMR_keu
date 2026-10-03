@@ -28,7 +28,7 @@ const UJI = {
   kapal: 'UJI-INTEGRASI KM Satu',
   asal: 'UJI Gudang',
   tujuan: 'UJI Pelabuhan',
-  jenisBaru: 'UJI-INTEGRASI jenis belum dipetakan'
+  jenisBaru: 'UJI-INTEGRASI jenis belum dipetakan' // nominalnya 77.777, diketik di inputPengeluaranBaru
 };
 
 // Angka yang diinput, dan angka yang harus muncul di portal.
@@ -269,6 +269,13 @@ async function bacaPos(page) {
   return angka;
 }
 
+/** Beban Operasional Lain — penampung pengeluaran yang belum dipetakan. */
+async function bacaOpexLain(page) {
+  const kolom = page.locator('#amount-OPEX_LAIN');
+  const teks = (await kolom.count()) ? await kolom.inputValue() : '';
+  return Number(teks.replace(/[^0-9-]/g, '') || 0);
+}
+
 /** Tekan Tarik data, setujui konfirmasi timpa bila muncul, kembalikan pesannya. */
 async function tarik(page) {
   await page.getByRole('button', { name: /Tarik data operasional/ }).click();
@@ -338,16 +345,19 @@ try {
     `COGS_SAKU sebelum tarik ${t5Sebelum.COGS_SAKU.toLocaleString('id-ID')}, sesudah ${t5Sesudah.COGS_SAKU.toLocaleString('id-ID')}`
   );
 
-  // T6 — jenis pengeluaran yang belum dipetakan menghentikan tarik.
+  // T6 — jenis pengeluaran yang belum dipetakan masuk Beban Operasional Lain
+  // (keputusan 4 Oktober 2026), dan jenisnya disebut di layar.
   await inputPengeluaranBaru(ops);
   await bukaInput(keu);
   const t6Pesan = await tarik(keu);
   const t6Angka = await bacaPos(keu);
+  const t6Lain = await bacaOpexLain(keu);
+  const t6Peringatan = await keu.getByText(UJI.jenisBaru, { exact: false }).count();
   await foto(keu, 'keu-t6-jenis-belum-dipetakan');
   catat(
     'T6',
-    t6Pesan.gagal && t6Pesan.teks.includes(UJI.jenisBaru) && t6Angka.COGS_SAKU === SAKU_BARU,
-    `pesan: "${t6Pesan.teks}"; COGS_SAKU tetap ${t6Angka.COGS_SAKU.toLocaleString('id-ID')}`
+    !t6Pesan.gagal && t6Lain === 77_777 && t6Peringatan > 0 && t6Angka.COGS_SAKU === SAKU_BARU,
+    `pesan: "${t6Pesan.teks}"; OPEX_LAIN ${t6Lain.toLocaleString('id-ID')}; jenis disebut di layar: ${t6Peringatan > 0 ? 'ya' : 'tidak'}`
   );
 } catch (error) {
   catat('ERROR', false, error instanceof Error ? error.message.split('\n')[0] : String(error));
@@ -360,8 +370,13 @@ try {
     await bukaInput(keu);
     const akhir = await tarik(keu);
     const t7 = samaDengan(await bacaPos(keu), NOL);
+    const t7Lain = await bacaOpexLain(keu);
     await foto(keu, 'keu-t7-akhir');
-    catat('T7', !akhir.gagal && t7.lulus, `dihapus ${JSON.stringify(n)}; tarik akhir: "${akhir.teks}"; ${t7.detail}`);
+    catat(
+      'T7',
+      !akhir.gagal && t7.lulus && t7Lain === 0,
+      `dihapus ${JSON.stringify(n)}; tarik akhir: "${akhir.teks}"; ${t7.detail}, OPEX_LAIN=${t7Lain}`
+    );
   } catch (error) {
     catat('T7', false, error instanceof Error ? error.message.split('\n')[0] : String(error));
   }

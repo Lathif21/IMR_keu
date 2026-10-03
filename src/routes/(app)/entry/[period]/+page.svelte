@@ -232,7 +232,8 @@
     transaksi: 'transaksi',
     rekap: 'rekap bulanan',
     pengeluaran: 'pengeluaran',
-    gaji_telly: 'baris gaji telly'
+    gaji_telly: 'baris gaji telly',
+    gaji_admin: 'baris gaji admin'
   };
 
   /**
@@ -407,6 +408,31 @@
           {form.rekapOnlyRoutes.length} rute bulan ini hanya punya rekap bulanan tanpa transaksi,
           sehingga kedua pos itu tidak terisi untuk rute tersebut:
           {form.rekapOnlyRoutes.map((r) => `${r.kapal} (${r.rute})`).join(', ')}.
+        </p>
+      </div>
+    {/if}
+
+    <!-- Jenis biaya tanpa pemetaan tidak menghentikan tarik data, tetapi juga
+         tidak boleh masuk Beban Operasional Lain diam-diam. Daftarnya selalu
+         ditampilkan supaya pemetaannya bisa dilengkapi direksi. -->
+    {#if form.unmappedExpenses && form.unmappedExpenses.length > 0}
+      <div class="px-5 py-2.5 bg-warning/10 border-b border-warning/25 shrink-0" role="status">
+        <p class="text-[12px] text-warning leading-relaxed">
+          <span class="font-semibold">Masuk Beban Operasional Lain karena belum dipetakan:</span>
+          {form.unmappedExpenses
+            .map((b) => `${b.jenis} (Rp ${formatAmount(b.jumlah)})`)
+            .join(', ')}. Minta direksi memetakan jenis ini di Administrasi → Pemetaan Biaya.
+        </p>
+      </div>
+    {/if}
+
+    {#if form.skippedExpenses && form.skippedExpenses.length > 0}
+      <div class="px-5 py-2.5 border-b border-border shrink-0" role="status">
+        <p class="text-[11px] text-muted-foreground leading-relaxed">
+          Tidak ditarik sesuai pemetaan:
+          {form.skippedExpenses
+            .map((b) => `${b.jenis} (Rp ${formatAmount(b.jumlah)})`)
+            .join(', ')}. Kalau biaya ini memang belum tercatat di pos lain, isi secara manual.
         </p>
       </div>
     {/if}

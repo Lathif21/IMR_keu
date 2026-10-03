@@ -1,6 +1,7 @@
 <script lang="ts">
   import Building2 from 'lucide-svelte/icons/building-2';
   import FileSpreadsheet from 'lucide-svelte/icons/file-spreadsheet';
+  import Split from 'lucide-svelte/icons/split';
   import Users from 'lucide-svelte/icons/users';
   import { page } from '$app/state';
 
@@ -9,14 +10,15 @@
   const tabs = [
     { href: '/admin/entities', label: 'Entitas', icon: Building2 },
     { href: '/admin/templates', label: 'Template', icon: FileSpreadsheet },
-    { href: '/admin/users', label: 'Pengguna', icon: Users }
+    { href: '/admin/users', label: 'Pengguna', icon: Users },
+    { href: '/admin/pemetaan-biaya', label: 'Pemetaan Biaya', icon: Split }
   ];
 </script>
 
 <div class="flex flex-col h-full overflow-hidden">
-  <!-- Sub-navigation lives here rather than in the sidebar: three admin
+  <!-- Sub-navigation lives here rather than in the sidebar: the admin
        screens under one nav item keeps the sidebar the size it is, and the
-       tabs say plainly that these three belong together. -->
+       tabs say plainly that they belong together. -->
   <div
     class="h-12 shrink-0 flex items-center gap-1 px-4 sm:px-5 border-b border-border overflow-x-auto"
   >

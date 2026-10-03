@@ -51,10 +51,22 @@ admin operasional yang sebenarnya:
 | `COGS_TERPAL` | Terpal | terpal truk | 50.000 |
 | `COGS_OPS` | Operasional Armada | biaya operasional kegiatan | 300.000 |
 
-Yang tidak diuji: `COGS_TELLY` dan `COGS_PAGUYUBAN` (butuh telly dan data
-paguyuban), dan pengeluaran yang **sudah** dipetakan — pemetaan jenis →
-`OPEX_*` (`pengeluaran_line_mapping`) belum punya layar, jadi jalur positifnya
-tidak bisa dicapai lewat UI. Pengeluaran diuji hanya di jalur penolakan (T6).
+Yang tidak diuji lewat layar: `COGS_TELLY`, `COGS_PAGUYUBAN`, gaji admin,
+dan pengeluaran yang **sudah** dipetakan. Keempatnya diuji dengan data dummy
+di tingkat kode (4 Oktober 2026):
+
+| Yang diuji | Di mana |
+|---|---|
+| `COGS_TELLY` lewat transaksi dan rekap, gaji admin tidak ikut | LaporanKeuangan `tests/Feature/IntegrasiRekapBulananTest.php` |
+| `COGS_PAGUYUBAN` mengikuti bulan transaksi induk | idem, `test_iuran_paguyuban_mengikuti_bulan_transaksi` |
+| gaji admin dikirim sebagai jenis `honor_telly`, bulan lain tidak ikut | idem |
+| pengeluaran per jenis, daftar jenis untuk layar pemetaan | idem |
+| pemetaan ke pos, jenis tanpa pemetaan → `OPEX_LAIN`, "tidak ditarik", penjumlahan tanpa float | IMR_keu `tests/operational-mapping.test.ts` |
+| RLS dan audit `operational_expense_mapping` | IMR_keu `tests/operational-sync.test.ts` (butuh Supabase lokal) |
+
+Sejak 4 Oktober 2026 T6 berubah: jenis yang belum dipetakan tidak lagi
+menolak tarik data, tetapi masuk Beban Operasional Lain dan disebut di layar.
+Skrip sudah disesuaikan; hasil di bawah masih hasil versi lama.
 
 ## Skenario
 
@@ -65,8 +77,8 @@ tidak bisa dicapai lewat UI. Pengeluaran diuji hanya di jalur penolakan (T6).
 | T3 | Portal: muat ulang Input Laporan **tanpa** menekan Tarik data. | Keenam pos tetap 0 — data tidak masuk otomatis. |
 | T4 | Portal: tekan **Tarik data operasional**. | Keenam pos sama dengan tabel harapan. |
 | T5 | Operasional: ubah saku truk menjadi 175.000. Portal: muat ulang, lalu tarik lagi (setujui konfirmasi timpa). | Sebelum tarik: `COGS_SAKU` masih 150.000. Sesudah tarik: 175.000. |
-| T6 | Operasional: tambah pengeluaran dengan jenis baru `UJI-INTEGRASI jenis belum dipetakan`. Portal: tarik data. | Ditolak dengan pesan yang menyebut jenis itu. Angka tidak berubah (`COGS_SAKU` tetap 175.000). |
-| T7 | Bersih-bersih: hapus pengeluaran, kegiatan, kapal, kendaraan, dan pemilik uji. Portal: tarik data. | Tarik berhasil, keenam pos kembali 0. |
+| T6 | Operasional: tambah pengeluaran 77.777 dengan jenis baru `UJI-INTEGRASI jenis belum dipetakan`. Portal: tarik data. | Tarik berhasil. `OPEX_LAIN` = 77.777, dan jenis itu disebut di peringatan "belum dipetakan". `COGS_SAKU` tetap 175.000. |
+| T7 | Bersih-bersih: hapus pengeluaran, kegiatan, kapal, kendaraan, dan pemilik uji. Portal: tarik data. | Tarik berhasil, keenam pos dan `OPEX_LAIN` kembali 0. |
 
 Setelah T7, periode ILJ Desember 2026 di portal tetap ada sebagai `draft`
 dengan angka nol. Portal tidak punya layar hapus periode; periode draft nol
