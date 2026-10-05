@@ -14,3 +14,6 @@ node_modules/
 
 .DS_Store
 Thumbs.db
+
+# Tangkapan layar dan hasil tes integrasi lewat layar
+tests/e2e/hasil/
