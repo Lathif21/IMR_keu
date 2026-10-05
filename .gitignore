@@ -8,6 +8,9 @@ node_modules/
 .env.*
 !.env.example
 
+# Catatan kredensial pribadi (lihat docs/TEST-CASE-INTEGRASI.md bagian 2)
+*.local.md
+
 # Supabase CLI local state
 /supabase/.temp/
 /supabase/.branches/
