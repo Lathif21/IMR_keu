@@ -50,7 +50,7 @@ angka, bukan pemilik laporan.
 | 4 · audit ditulis trigger | Sinkronisasi menulis lewat `report_lines` seperti form biasa. Tidak ada jalur khusus, jadi tidak ada yang lolos audit. |
 | 5 · `report_lines` hanya bisa ditulis saat draft | Tarik data pada periode non-draft harus gagal dengan pesan jelas, bukan diam-diam tidak melakukan apa-apa. Trigger sudah menolak; UI tidak boleh menyembunyikan penolakannya. |
 | 7 · template adalah data | `COGS_TELLY` dan `COGS_PAGUYUBAN` masuk lewat *insert* baris template versi baru, bukan konstanta TypeScript. |
-| 8 · jangan mengarang kebijakan | Jenis pengeluaran yang belum dipetakan **menghentikan** sinkronisasi dan menampilkan daftarnya. Tidak ada fallback diam-diam ke `OPEX_LAIN`. |
+| 8 · jangan mengarang kebijakan | Jenis pengeluaran yang belum dipetakan masuk `OPEX_LAIN` — dipilih pemilik sistem, lihat "Keputusan 4 Oktober 2026" — dan **selalu** disebut satu per satu di layar input. Yang dilarang adalah fallback yang diam. |
 
 ## Pemetaan
 
@@ -66,7 +66,7 @@ Sumber di Laravel → `line_code` di IMR_keu. Semua agregat untuk satu bulan.
 | `COGS_OPS` | `operasional_rekap` | `sum(operasional)` — lihat "Biaya operasional tidak ada di kolomnya" |
 | `COGS_TELLY` *(baru)* | `gaji_telly` | `sum(gaji_bersih)` baris telly saja — lihat "Tiga jenis baris di `gaji_telly`" |
 | `COGS_PAGUYUBAN` *(baru)* | `paguyuban` | `sum(total_bayar)`, bulan lewat `transaksi_operasional.tanggal` induknya |
-| `OPEX_*` | `pengeluaran` | `sum(jumlah)` dikelompokkan lewat tabel pemetaan `jenis` → `line_code` |
+| `OPEX_*` | `pengeluaran`, gaji admin di `gaji_telly` | dikirim per jenis di `biaya_per_jenis`; dipetakan ke `line_code` di portal (`operational_expense_mapping`) |
 
 Bulan sebuah transaksi ditentukan oleh **`transaksi_operasional.tanggal`** —
 kolom yang sudah dipakai scope `periode()` di Laravel. Alasannya bukan
@@ -186,8 +186,15 @@ nominal yang sama muncul dua kali di laporan.
 menebak: pada bulan ketika upah telly dan gaji admin memang dua pos yang
 berbeda, salah satunya hilang begitu saja.
 
-Yang harus menyusul di sisi Laravel supaya keputusan ini benar-benar berlaku,
-bukan sekadar tertulis di sini:
+> **Diganti 4 Oktober 2026.** Cara kerja admin operasional tidak diubah.
+> Gaji admin dari Honor Telly dikirim sebagai jenis tersendiri
+> (`sumber = honor_telly`) di samping pengeluaran berjenis gaji, dan direksi
+> memilih di layar Pemetaan Biaya portal mana yang masuk Gaji Karyawan dan
+> mana yang "Tidak ditarik". Dua butir Laravel di bawah tidak lagi diperlukan
+> untuk portal; `max()` di laporan gaji Laravel tetap urusan sistem itu
+> sendiri.
+
+Yang semula harus menyusul di sisi Laravel:
 
 - **pindahkan pencatatan gaji admin ke `pengeluaran`.** Belum dikerjakan:
   mengubahnya berarti mengubah cara admin operasional bekerja, dan itu
@@ -397,8 +404,9 @@ Urutannya:
 1. tolak kalau peran bukan `staf_entitas` yang berhak atas entitas itu
 2. tolak kalau entitas ini tidak ditautkan ke sistem operasional
 3. panggil endpoint Laravel dengan token dari `$env/static/private`
-4. kalau `jenis_belum_dipetakan` tidak kosong → `fail(409)` dengan daftarnya,
-   jangan tulis apa pun
+4. petakan `biaya_per_jenis` lewat `operational_expense_mapping` entitas itu
+   (`petakanBiaya` di `operational.ts`); jenis tanpa pemetaan masuk
+   `OPEX_LAIN` dan dikembalikan untuk ditampilkan
 5. kalau ada `line_code` yang tidak ada di template periode → `fail(409)`,
    jangan tulis sebagian. Menulis separuh laporan lebih buruk daripada gagal.
 6. `upsert` ke `report_lines` on conflict `(period_id, line_code)`, dengan
@@ -421,7 +429,8 @@ Ikuti pola `docs/task/05-regression-tests.md`. Yang wajib ada:
 
 - tarik data pada periode `submitted` ditolak trigger, dan pesannya sampai ke
   layar
-- `jenis_belum_dipetakan` tidak kosong ⇒ tidak ada satu pun baris tertulis
+- jenis tanpa pemetaan ⇒ masuk `OPEX_LAIN` dan disebut di layar; jenis
+  "tidak ditarik" ⇒ tidak masuk pos mana pun dan disebut di layar
 - rute dengan transaksi **dan** rekap ⇒ dihitung sekali, dari transaksi
 - rute dengan rekap saja ⇒ nilainya ikut, dan rutenya muncul di
   `rute_rekap_saja`
@@ -463,6 +472,20 @@ akta, dan laporan keuangan memakai yang di akta — jadi ini yang pertama
 ditinjau ulang begitu ada urusan pajak, bersama `entities.npwp` yang masih
 kosong. `CONTEXT.md` mencatat dasarnya supaya tidak terbaca sebagai fakta yang
 sudah diverifikasi.
+
+## Keputusan 4 Oktober 2026
+
+| # | Keputusan | Akibatnya |
+|---|---|---|
+| 7 | Pemetaan jenis pengeluaran → pos laporan diatur di portal, bukan di Laravel | Endpoint mengirim `biaya_per_jenis` tanpa `line_code`; tabel `pengeluaran_line_mapping` dan perintah `integrasi:jenis` di Laravel tidak dipakai lagi. Pemetaan di `operational_expense_mapping`, layar `/admin/pemetaan-biaya` (direksi). Kosakata jenis dibaca dari `GET /api/integrasi/jenis-pengeluaran`. |
+| 8 | Jenis yang belum dipetakan masuk `OPEX_LAIN`, tidak menghentikan tarik data | Daftarnya selalu tampil di layar input. Pengganti aturan "jenis belum dipetakan menghentikan sinkronisasi". |
+| 9 | Gaji admin ditentukan di portal | Gaji admin dari Honor Telly dikirim sebagai jenis `honor_telly / Gaji Admin Bulanan`. Direksi memetakannya ke Gaji Karyawan *atau* "Tidak ditarik", berpasangan dengan pengeluaran berjenis gaji — satu sumber saja supaya tidak terhitung dua kali. Cara kerja admin operasional tidak berubah. |
+
+**Urutan deploy.** Portal dulu, Laravel kemudian. Portal baru menolak respons
+tanpa `biaya_per_jenis` dengan pesan "perlu diperbarui", jadi selama Laravel
+belum di-deploy tarik data gagal dengan jelas, bukan menulis angka yang salah.
+Urutan sebaliknya membuat portal lama menerima respons tanpa pos OPEX dan
+tanpa `jenis_belum_dipetakan` — pengeluaran hilang tanpa pesan.
 
 ## Belum diputuskan
 

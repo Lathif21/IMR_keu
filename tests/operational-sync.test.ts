@@ -14,13 +14,12 @@
  *     tidak boleh ikut tertulis — separuh laporan lebih buruk daripada tidak
  *     ada laporan, karena ia terlihat lengkap.
  *
- * Pemeriksaan bentuk respons diuji terpisah di bawah, tanpa database:
- * `parseRekap` adalah satu-satunya tempat respons sistem lain dipercaya.
+ * Pemeriksaan bentuk respons dan pemetaan biaya diuji tanpa database di
+ * `operational-mapping.test.ts`.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { parseRekap } from '../src/routes/(app)/entry/[period]/operational';
 import {
   closeDb,
   entityId,
@@ -429,63 +428,74 @@ describe('operational_sync_config', () => {
   });
 });
 
-describe('parseRekap', () => {
-  const lengkap = {
-    periode: '2026-08',
-    dihitung_pada: '2026-09-20T10:00:00+07:00',
-    baris: { REV_TAGIHAN: '241500000.00', COGS_SAKU: '0.00' },
-    jenis_belum_dipetakan: [],
-    rute_rekap_saja: [],
-    jumlah_sumber: { invoice: 26, transaksi: 140 }
-  };
-
-  it('menerima respons yang sah', () => {
-    const hasil = parseRekap(lengkap);
-    expect(hasil.ok).toBe(true);
-    if (hasil.ok) {
-      expect(hasil.rekap.baris.REV_TAGIHAN).toBe('241500000.00');
-      expect(hasil.rekap.jumlah_sumber.invoice).toBe(26);
-    }
-  });
-
+describe('operational_expense_mapping', () => {
   /**
-   * Ini alasan pemeriksaan ini ada. Angka JSON sudah melewati float saat
-   * diurai, jadi menerimanya berarti menerima nilai yang mungkin sudah
-   * bergeser sebelum kode ini sempat melihatnya.
+   * Action tarik data berjalan dengan sesi staf. Kalau staf tidak bisa
+   * membaca pemetaan, seluruh pengeluaran jatuh ke Beban Operasional Lain
+   * tanpa ada yang salah di mana pun selain angkanya.
    */
-  it('menolak nominal yang dikirim sebagai angka, bukan teks', () => {
-    const hasil = parseRekap({ ...lengkap, baris: { REV_TAGIHAN: 241500000 } });
-    expect(hasil.ok).toBe(false);
-    if (!hasil.ok) expect(hasil.message).toMatch(/bukan sebagai teks/);
+  it('dapat dibaca staf entitasnya sendiri', async () => {
+    await sql(
+      `insert into operational_expense_mapping (entity_id, source, jenis, line_code)
+       values ($1, 'pengeluaran', 'Sewa Kantor', 'OPEX_SEWA')
+       on conflict (entity_id, source, jenis) do update set line_code = excluded.line_code`,
+      [ilj]
+    );
+
+    const { data, error } = await staff
+      .from('operational_expense_mapping')
+      .select('source, jenis, line_code')
+      .eq('entity_id', ilj);
+
+    expect(error).toBeNull();
+    expect(data).toContainEqual({ source: 'pengeluaran', jenis: 'Sewa Kantor', line_code: 'OPEX_SEWA' });
   });
 
-  /** Tiga desimal hanya bisa muncul kalau pengirim sempat memakai float. */
-  it('menolak nominal dengan lebih dari dua desimal', () => {
-    const hasil = parseRekap({ ...lengkap, baris: { REV_TAGIHAN: '1.005' } });
-    expect(hasil.ok).toBe(false);
+  /** Pemetaan menentukan pos sebuah biaya: keputusan direksi, bukan staf. */
+  it('tidak dapat diubah staf, hanya direksi', async () => {
+    const ditolak = await staff
+      .from('operational_expense_mapping')
+      .insert({ entity_id: ilj, source: 'pengeluaran', jenis: 'ATK', line_code: 'OPEX_ATK' });
+    expect(ditolak.error).not.toBeNull();
+
+    const diterima = await director
+      .from('operational_expense_mapping')
+      .insert({ entity_id: ilj, source: 'honor_telly', jenis: 'Gaji Admin Bulanan', line_code: null });
+    expect(diterima.error).toBeNull();
   });
 
-  it('menolak notasi eksponen', () => {
-    const hasil = parseRekap({ ...lengkap, baris: { REV_TAGIHAN: '2.415e8' } });
-    expect(hasil.ok).toBe(false);
+  it('perubahannya tercatat di audit_log', async () => {
+    const before = await sql<{ jumlah: string }>(
+      "select count(*)::text as jumlah from audit_log where table_name = 'operational_expense_mapping'"
+    );
+
+    await director
+      .from('operational_expense_mapping')
+      .update({ line_code: 'OPEX_LAIN' })
+      .eq('entity_id', ilj)
+      .eq('jenis', 'Sewa Kantor');
+
+    const after = await sql<{ jumlah: string }>(
+      "select count(*)::text as jumlah from audit_log where table_name = 'operational_expense_mapping'"
+    );
+
+    expect(Number(after[0].jumlah)).toBeGreaterThan(Number(before[0].jumlah));
   });
 
-  it('menolak respons tanpa daftar baris', () => {
-    expect(parseRekap({ periode: '2026-08' }).ok).toBe(false);
-    expect(parseRekap('bukan objek').ok).toBe(false);
-  });
+  it('menolak sumber yang tidak dikenal dan jenis kosong', async () => {
+    await expect(
+      sql(
+        "insert into operational_expense_mapping (entity_id, source, jenis) values ($1, 'kas_kecil', 'ATK')",
+        [ilj]
+      )
+    ).rejects.toThrow();
 
-  /**
-   * Bidang peringatan yang hilang tidak boleh menjatuhkan sinkronisasi:
-   * sistem operasional versi lama masih boleh menjawab, asalkan barisnya
-   * benar.
-   */
-  it('memperlakukan bidang peringatan yang hilang sebagai kosong', () => {
-    const hasil = parseRekap({ baris: { REV_TAGIHAN: '1.00' } });
-    expect(hasil.ok).toBe(true);
-    if (hasil.ok) {
-      expect(hasil.rekap.jenis_belum_dipetakan).toEqual([]);
-      expect(hasil.rekap.rute_rekap_saja).toEqual([]);
-    }
+    await expect(
+      sql(
+        "insert into operational_expense_mapping (entity_id, source, jenis) values ($1, 'pengeluaran', '  ')",
+        [ilj]
+      )
+    ).rejects.toThrow();
   });
 });
+
