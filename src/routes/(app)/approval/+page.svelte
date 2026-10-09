@@ -381,6 +381,18 @@
                       Tolak...
                     </a>
                   {:else if row.period && data.canApprove && row.period.status === 'approved'}
+                    <!-- An approved period can go back to draft (the trigger
+                         allows it to direksi and manajer, with a note). Before
+                         this link the only way was Kunci and then Buka Kunci,
+                         which also needed direksi. -->
+                    <a
+                      href={actionHref(row.period.id, 'note')}
+                      class="flex items-center gap-1 px-2.5 py-1 border border-border text-muted-foreground
+                             text-[12px] font-medium rounded-md hover:bg-muted hover:text-foreground
+                             transition-colors"
+                    >
+                      Kembalikan ke draft...
+                    </a>
                     <form method="POST" action="?/lock" use:enhance>
                       <input type="hidden" name="periodId" value={row.period.id} />
                       <button
@@ -517,7 +529,7 @@
                       </div>
 
                       <div class="flex flex-col gap-2">
-                        {#if data.canApprove && (row.period.status === 'submitted' || (data.canUnlock && row.period.status === 'locked'))}
+                        {#if data.canApprove && (row.period.status === 'submitted' || row.period.status === 'approved' || (data.canUnlock && row.period.status === 'locked'))}
                           <form method="POST" class="flex flex-col gap-2 h-full" use:enhance>
                             <input type="hidden" name="periodId" value={row.period.id} />
                             <label
@@ -532,6 +544,8 @@
                               required
                               placeholder={row.period.status === 'locked'
                                 ? 'Tulis alasan membuka kunci...'
+                                : row.period.status === 'approved'
+                                  ? 'Tulis alasan membatalkan persetujuan...'
                                 : 'Tulis alasan penolakan...'}
                               class="flex-1 min-h-[110px] bg-card border border-border rounded-lg p-3 text-[13px]
                                      text-foreground placeholder:text-subtle resize-none focus:outline-none
@@ -551,6 +565,21 @@
                                        hover:bg-destructive/20 transition-colors"
                               >
                                 Tolak & kembalikan ke draft
+                              </button>
+                            {:else if row.period.status === 'approved'}
+                              <p class="text-[11px] text-warning leading-relaxed">
+                                Membatalkan persetujuan mengembalikan periode ke draft supaya staf
+                                entitas bisa mengoreksinya, mengeluarkannya dari angka konsolidasi,
+                                dan tercatat di audit log. Catatan ini tampil di layar input.
+                              </p>
+                              <button
+                                type="submit"
+                                formaction="?/reject"
+                                class="self-start px-3 py-1.5 rounded-md border border-warning/30
+                                       bg-warning/10 text-warning text-[12px] font-medium
+                                       hover:bg-warning/20 transition-colors"
+                              >
+                                Kembalikan ke draft
                               </button>
                             {:else}
                               <p class="text-[11px] text-warning leading-relaxed">
