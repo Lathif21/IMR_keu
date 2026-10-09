@@ -2,7 +2,13 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { OPERATIONAL_SYNC_TOKEN } from '$env/static/private';
 import type { LineSection, Numeric, PeriodStatus } from '$lib/domain';
-import { AMOUNT_LIMIT, MONTH_PATTERN, formatAmount, parseAmountInput } from '$lib/format';
+import {
+  AMOUNT_LIMIT,
+  MONTH_PATTERN,
+  formatAmount,
+  isDisplayRounding,
+  parseAmountInput
+} from '$lib/format';
 import { canEnterReports } from '$lib/roles';
 import { loadEntryAccess } from '../access';
 import { fetchRekapOperasional, petakanBiaya, type PemetaanBiaya } from './operational';
@@ -184,8 +190,26 @@ function collectLines(form: FormData): LineInput[] {
 async function writeLines(
   supabase: SupabaseClient,
   periodId: string,
-  lines: LineInput[]
+  posted: LineInput[]
 ): Promise<PostgrestError | null> {
+  /**
+   * Lines the person did not change are left alone. The form only knows whole
+   * Rupiah, so a pulled 1.897,50 comes back as 1.898; writing that would
+   * change the figure and flip it to 'manual' without anyone deciding to.
+   */
+  const { data: stored, error: readError } = await supabase
+    .from('report_lines')
+    .select('line_code, amount, note')
+    .eq('period_id', periodId)
+    .returns<{ line_code: string; amount: Numeric; note: string | null }[]>();
+  if (readError) return readError;
+
+  const byCode = new Map((stored ?? []).map((row) => [row.line_code, row]));
+  const lines = posted.filter((line) => {
+    const row = byCode.get(line.line_code);
+    return !(row && (row.note ?? null) === line.note && isDisplayRounding(row.amount, line.amount));
+  });
+
   const keep = lines.filter((line) => line.amount !== 0 || line.note !== null);
   const drop = lines
     .filter((line) => line.amount === 0 && line.note === null)
