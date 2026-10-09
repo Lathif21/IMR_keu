@@ -5,23 +5,33 @@
   import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
   import {
     NO_DATA,
+    currentPeriod,
     formatAmount,
     formatCompact,
     formatDelta,
     formatPct,
     formatPeriod,
-    previousPeriod,
+    periodToMonth,
     shareOf,
     toAmount
   } from '$lib/format';
   import { REPORTING_BASIS_LABEL, PERIOD_STATUS_LABEL, type Numeric } from '$lib/domain';
   import { entityIcon } from '$lib/icons';
+  import { comparisonTag, monthsBetween, sameCoverage, type RangeMode } from '$lib/period-range';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
-  /** Month-over-month change. Never labelled YoY — the prototype did that. */
-  function momPct(current: Numeric | null | undefined, prior: Numeric | null | undefined): number | null {
+  /** One month, or several summed. Several changes how counts are worded. */
+  const multiMonth = $derived((data.completeness?.months ?? 1) > 1);
+  const tag = $derived(comparisonTag(data.range?.mode ?? 'bulanan'));
+
+  /**
+   * Change against the same-length range just before: MoM for a month, YoY
+   * for a year, "vs. sebelumnya" for a custom range. The prototype labelled
+   * MoM as YoY; each tag here says exactly what it compares.
+   */
+  function changePct(current: Numeric | null | undefined, prior: Numeric | null | undefined): number | null {
     const a = toAmount(current);
     const b = toAmount(prior);
     if (a === null || b === null || b === 0) return null;
@@ -31,33 +41,38 @@
   const revenueMom = $derived(
     data.scoped
       ? null
-      : momPct(data.consolidated?.revenue_consolidated, data.previous?.revenue_consolidated)
+      : changePct(data.consolidated?.revenue_consolidated, data.previous?.revenue_consolidated)
   );
   const netProfitMom = $derived(
     data.scoped
       ? null
-      : momPct(data.consolidated?.net_profit_consolidated, data.previous?.net_profit_consolidated)
+      : changePct(data.consolidated?.net_profit_consolidated, data.previous?.net_profit_consolidated)
   );
 
   /**
    * One row per active entity, whether or not it reported. An entity missing
    * from the total has to be visible as missing; the prototype dropped
    * non-reporting entities silently, which made a partial figure look final.
+   *
+   * Over several months an entity counts if at least one month is approved,
+   * and the row says how many — "3/12 bln" is not the same contribution as a
+   * full year, even when the bar looks alike.
    */
   const contributions = $derived.by(() => {
     if (data.scoped) return [];
-    const byEntity = new Map(data.pnl.map((row) => [row.entity_id, row]));
     const base = toAmount(data.consolidated?.revenue_sum);
+    const months = data.completeness?.months ?? 1;
 
     return data.entities
       .map((entity) => {
-        const row = byEntity.get(entity.id) ?? null;
-        const counted = row !== null && (row.status === 'approved' || row.status === 'locked');
-        const revenue = counted ? toAmount(row.revenue) : null;
+        const totals = data.totals[entity.id] ?? null;
+        const counted = (totals?.countedMonths ?? 0) > 0;
+        const revenue = counted ? toAmount(totals?.revenue) : null;
         return {
           entity,
-          row,
+          totals,
           counted,
+          partial: counted && (totals?.countedMonths ?? 0) < months,
           revenue,
           share: shareOf(revenue, base)
         };
@@ -73,33 +88,37 @@
    * be inventing a policy (invariant 8). A negative result needs no threshold.
    */
   const alerts = $derived.by<Alert[]>(() => {
-    if (data.scoped || !data.period) return [];
-    const period = data.period;
+    if (data.scoped || !data.range) return [];
     const out: Alert[] = [];
 
     for (const item of contributions) {
-      if (!item.counted || !item.row) continue;
-      const net = toAmount(item.row.net_profit);
+      if (!item.counted || !item.totals) continue;
+      const net = toAmount(item.totals.netProfit);
       if (net !== null && net < 0) {
+        // Margin only for a single month: v_period_pnl computes it per
+        // period, and a margin of summed months would be a new calculation.
+        const row = multiMonth ? null : data.pnl.find((r) => r.entity_id === item.entity.id);
         out.push({
           kind: 'loss',
           title: item.entity.legal_name,
-          detail: `Rugi bersih ${formatCompact(net)} pada ${formatPeriod(period)}${
-            item.row.net_margin_pct ? ` · margin ${formatPct(item.row.net_margin_pct, 2)}` : ''
+          detail: `Rugi bersih ${formatCompact(net)} pada ${data.rangeLabel}${
+            row?.net_margin_pct ? ` · margin ${formatPct(row.net_margin_pct, 2)}` : ''
           }`
         });
       }
     }
 
-    for (const code of data.completeness?.missing_entities ?? []) {
+    for (const { code, months } of data.completeness?.missing ?? []) {
       const entity = data.entities.find((e) => e.code === code);
-      const row = data.pnl.find((r) => r.entity_code === code);
+      const status = entity ? data.totals[entity.id]?.latestStatus : null;
       out.push({
         kind: 'missing',
         title: entity?.legal_name ?? code,
-        detail: row
-          ? `Berstatus ${PERIOD_STATUS_LABEL[row.status]} — belum disetujui, jadi tidak masuk konsolidasi`
-          : 'Belum ada laporan untuk periode ini'
+        detail: multiMonth
+          ? `Belum disetujui untuk ${months} dari ${data.completeness?.months} bulan — bulan itu tidak masuk konsolidasi`
+          : status
+            ? `Berstatus ${PERIOD_STATUS_LABEL[status]} — belum disetujui, jadi tidak masuk konsolidasi`
+            : 'Belum ada laporan untuk periode ini'
       });
     }
 
@@ -114,21 +133,63 @@
     return out;
   });
 
-  const prevPeriodLabel = $derived(data.period ? formatPeriod(previousPeriod(data.period)) : '');
+  const prevPeriodLabel = $derived(data.priorLabel);
 
   /**
-   * A MoM delta is only a change in performance if both months cover the same
-   * entities. When an entity appears or drops out, most of the "growth" is
-   * that entity arriving — the seed's +37,2% is entirely TAMBANG showing up in
-   * July. Comparing across different sets is the "3/4 looks like 4/4" trap in
-   * a second dimension, so the delta is marked instead of coloured green.
+   * A change is only a change in performance if both ranges cover the same
+   * entity-months. When an entity appears or drops out, most of the "growth"
+   * is that entity arriving — the seed's +37,2% is entirely TAMBANG showing up
+   * in July. Comparing across different sets is the "3/4 looks like 4/4" trap
+   * in a second dimension, so the delta is marked instead of coloured green.
    */
   const momSetDiffers = $derived.by(() => {
     if (data.scoped || !data.consolidated || !data.previous) return false;
-    const now = [...(data.completeness?.missing_entities ?? [])].sort().join(',');
-    const then = [...(data.previous.missing_entities ?? [])].sort().join(',');
-    return now !== then;
+    if (!data.completeness || !data.priorCompleteness) return false;
+    return !sameCoverage(data.completeness, data.priorCompleteness);
   });
+
+  // --- Filter waktu -------------------------------------------------------
+
+  const MODES: { mode: RangeMode; label: string }[] = [
+    { mode: 'bulanan', label: 'Bulanan' },
+    { mode: 'tahunan', label: 'Tahunan' },
+    { mode: 'custom', label: 'Custom' }
+  ];
+
+  /**
+   * Every month from the first period ever created up to this month, newest
+   * first. Not only months that have periods: a custom range may start in a
+   * month nobody reported, and saying so is the point of the banner.
+   */
+  const monthOptions = $derived.by(() => {
+    // The active range is always included, so a select never shows a month
+    // other than the one actually in force (a full year reaches back to
+    // January even when the first period is September).
+    const known = [
+      ...data.periods.map((p) => p.period),
+      currentPeriod(),
+      ...(data.range ? [data.range.from, data.range.to] : [])
+    ].sort();
+    return monthsBetween(known[0], known[known.length - 1]).reverse();
+  });
+
+  const yearOptions = $derived([...new Set(monthOptions.map((p) => p.slice(0, 4)))]);
+
+  /** Switching mode keeps the user near where they were. */
+  function modeHref(mode: RangeMode): string {
+    const to = data.range?.to ?? monthOptions[0] ?? currentPeriod();
+    const from = data.range?.from ?? to;
+    if (mode === 'tahunan') return `?mode=tahunan&tahun=${to.slice(0, 4)}`;
+    if (mode === 'custom') return `?mode=custom&dari=${periodToMonth(from)}&sampai=${periodToMonth(to)}`;
+    return `?mode=bulanan&periode=${periodToMonth(to)}`;
+  }
+
+  const SELECT =
+    'h-[30px] pl-3 pr-2 bg-card border border-border rounded-lg text-[13px] text-foreground ' +
+    'tabular-nums hover:bg-muted transition-colors focus:outline-none focus:border-primary';
+
+  const submitOnChange = (event: Event) =>
+    (event.currentTarget as HTMLSelectElement).form?.requestSubmit();
 
   /**
    * CONTEXT.md: two entities on different bases are not comparable, and any
@@ -136,10 +197,10 @@
    */
   const basisWarning = $derived.by(() => {
     if (data.scoped) return null;
-    const counted = contributions.filter((c) => c.counted && c.row);
+    const counted = contributions.filter((c) => c.counted);
     if (counted.length === 0) return null;
 
-    const bases = new Set(counted.map((c) => c.row!.reporting_basis));
+    const bases = new Set(counted.map((c) => c.entity.reporting_basis));
     if (bases.size === 1 && !bases.has('unknown')) return null;
 
     if (bases.has('unknown')) {
@@ -199,40 +260,94 @@
     <div class="h-12 flex items-center justify-between px-4 sm:px-5 border-b border-border shrink-0 gap-3">
       <div class="flex items-center gap-3 min-w-0">
         <h1 class="text-[13px] font-semibold text-foreground truncate">Dasbor Eksekutif</h1>
-        <!-- The subtitle is the first thing to go: on a phone the period
-             picker beside it is what people came for. -->
         <span class="text-[11px] text-muted-foreground truncate hidden sm:inline">
-          Grup Holding · Konsolidasi
+          Grup Holding · Konsolidasi · {data.rangeLabel}
         </span>
       </div>
-
-      <form method="GET" class="flex items-center gap-2 shrink-0">
-        <label for="periode" class="sr-only">Periode</label>
-        <select
-          id="periode"
-          name="periode"
-          class="h-[30px] pl-3 pr-2 bg-card border border-border rounded-lg text-[13px] text-foreground
-                 tabular-nums hover:bg-muted transition-colors focus:outline-none focus:border-primary"
-          onchange={(event) => event.currentTarget.form?.requestSubmit()}
-        >
-          {#each data.periods as option (option.period)}
-            <option value={option.period} selected={option.period === data.period}>
-              {formatPeriod(option.period)}
-            </option>
-          {/each}
-        </select>
-        <noscript>
-          <button
-            type="submit"
-            class="h-[30px] px-3 bg-card border border-border rounded-lg text-[13px] text-foreground"
-          >
-            Tampilkan
-          </button>
-        </noscript>
-      </form>
     </div>
 
     <div class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 sm:space-y-5">
+      <!-- Time filter. It used to be a lone dropdown in the header's far
+           corner, where people did not look for it; it now sits first in the
+           content, above everything it changes. -->
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div
+          class="inline-flex items-center p-0.5 bg-card border border-border rounded-lg"
+          role="group"
+          aria-label="Jenis periode"
+        >
+          {#each MODES as option (option.mode)}
+            {@const active = data.range?.mode === option.mode}
+            <a
+              href={modeHref(option.mode)}
+              aria-current={active ? 'true' : undefined}
+              class="h-[26px] px-3 inline-flex items-center rounded-md text-[12px] transition-colors
+                     {active
+                ? 'bg-primary text-primary-foreground font-medium'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'}"
+            >
+              {option.label}
+            </a>
+          {/each}
+        </div>
+
+        <form method="GET" class="flex flex-wrap items-center gap-2">
+          <input type="hidden" name="mode" value={data.range?.mode} />
+
+          {#if data.range?.mode === 'tahunan'}
+            <label for="tahun" class="sr-only">Tahun</label>
+            <select id="tahun" name="tahun" class={SELECT} onchange={submitOnChange}>
+              {#each yearOptions as year (year)}
+                <option value={year} selected={year === data.range.from.slice(0, 4)}>{year}</option>
+              {/each}
+            </select>
+          {:else if data.range?.mode === 'custom'}
+            <label for="dari" class="text-[12px] text-muted-foreground">Dari</label>
+            <select id="dari" name="dari" class={SELECT}>
+              {#each monthOptions as month (month)}
+                <option value={periodToMonth(month)} selected={month === data.range.from}>
+                  {formatPeriod(month)}
+                </option>
+              {/each}
+            </select>
+            <label for="sampai" class="text-[12px] text-muted-foreground">sampai</label>
+            <select id="sampai" name="sampai" class={SELECT}>
+              {#each monthOptions as month (month)}
+                <option value={periodToMonth(month)} selected={month === data.range.to}>
+                  {formatPeriod(month)}
+                </option>
+              {/each}
+            </select>
+            <button
+              type="submit"
+              class="h-[30px] px-3 rounded-lg bg-primary text-[12px] font-medium text-primary-foreground
+                     hover:bg-accent transition-colors"
+            >
+              Terapkan
+            </button>
+          {:else}
+            <label for="periode" class="sr-only">Bulan</label>
+            <select id="periode" name="periode" class={SELECT} onchange={submitOnChange}>
+              {#each monthOptions as month (month)}
+                <option value={periodToMonth(month)} selected={month === data.range?.from}>
+                  {formatPeriod(month)}
+                </option>
+              {/each}
+            </select>
+          {/if}
+
+          {#if data.range?.mode !== 'custom'}
+            <noscript>
+              <button type="submit" class={SELECT}>Tampilkan</button>
+            </noscript>
+          {/if}
+        </form>
+
+        <p class="text-[11px] text-subtle">
+          Dibandingkan dengan {data.priorLabel} ({tag})
+        </p>
+      </div>
+
       <!-- Incompleteness is never silent. CLAUDE.md anti-pattern: showing
            consolidated totals without a banner when entities haven't reported. -->
       {#if data.completeness && !data.completeness.is_complete}
@@ -242,12 +357,19 @@
         >
           <TriangleAlert size={14} class="text-warning shrink-0 mt-px" />
           <p class="text-[13px] text-warning flex-1 leading-relaxed">
-            Data belum lengkap — {data.completeness.reported_entities} dari {data.completeness
-              .expected_entities} entitas sudah disetujui. Angka di bawah ini bukan angka konsolidasi
-            final.
-            {#if data.completeness.missing_entities?.length}
+            {#if multiMonth}
+              Data belum lengkap — {data.completeness.reported} dari {data.completeness.expected}
+              entitas-bulan sudah disetujui ({data.completeness.months} bulan × {data.entities.length}
+              entitas). Angka di bawah ini bukan angka konsolidasi final.
+            {:else}
+              Data belum lengkap — {data.completeness.reported} dari {data.completeness.expected}
+              entitas sudah disetujui. Angka di bawah ini bukan angka konsolidasi final.
+            {/if}
+            {#if data.completeness.missing.length}
               <span class="font-semibold">
-                Belum masuk: {data.completeness.missing_entities.join(', ')}.
+                Belum masuk: {data.completeness.missing
+                  .map((m) => (multiMonth ? `${m.code} (${m.months} bln)` : m.code))
+                  .join(', ')}.
               </span>
             {/if}
           </p>
@@ -263,7 +385,7 @@
                    tabular-nums bg-warning/10 text-warning"
           >
             <TriangleAlert size={10} />
-            {formatDelta(value)} MoM
+            {formatDelta(value)} {tag}
           </span>
           <p class="text-[11px] text-warning">
             himpunan entitas berbeda dari {prevPeriodLabel} — bukan perubahan kinerja
@@ -274,7 +396,7 @@
                    {value >= 0 ? 'bg-positive/10 text-positive' : 'bg-destructive/10 text-destructive'}"
           >
             {#if value >= 0}<ArrowUpRight size={10} />{:else}<ArrowDownRight size={10} />{/if}
-            {formatDelta(value)} MoM
+            {formatDelta(value)} {tag}
           </span>
           <p class="text-[11px] text-subtle">vs. {prevPeriodLabel}</p>
         {/if}
@@ -322,7 +444,7 @@
         <div class="bg-card border border-border rounded-lg p-4">
           <p class="text-[11px] font-medium text-muted-foreground mb-1.5">Kelengkapan</p>
           <p class="text-[22px] font-semibold text-foreground tabular-nums leading-none mb-2">
-            {data.completeness?.reported_entities ?? 0}/{data.completeness?.expected_entities ?? 0}
+            {data.completeness?.reported ?? 0}/{data.completeness?.expected ?? 0}
           </p>
           <div class="flex items-center gap-1.5 flex-wrap">
             {#if data.completeness?.is_complete}
@@ -336,11 +458,12 @@
                 class="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded bg-warning/10 text-warning"
               >
                 <TriangleAlert size={10} />
-                {(data.completeness?.expected_entities ?? 0) -
-                  (data.completeness?.reported_entities ?? 0)} belum lapor
+                {(data.completeness?.expected ?? 0) - (data.completeness?.reported ?? 0)} belum lapor
               </span>
             {/if}
-            <p class="text-[11px] text-subtle">entitas disetujui</p>
+            <p class="text-[11px] text-subtle">
+              {multiMonth ? 'entitas-bulan disetujui' : 'entitas disetujui'}
+            </p>
           </div>
         </div>
       </div>
@@ -381,6 +504,11 @@
                   </div>
                   <div class="flex items-center gap-4 shrink-0">
                     {#if item.counted}
+                      {#if item.partial}
+                        <span class="text-[11px] text-warning tabular-nums">
+                          {item.totals?.countedMonths}/{data.completeness?.months} bln
+                        </span>
+                      {/if}
                       <span class="text-[11px] text-muted-foreground tabular-nums">
                         {formatCompact(item.revenue)}
                       </span>
@@ -389,7 +517,9 @@
                       </span>
                     {:else}
                       <span class="text-[11px] text-subtle">
-                        {item.row ? PERIOD_STATUS_LABEL[item.row.status] : 'belum lapor'}
+                        {item.totals?.latestStatus
+                          ? PERIOD_STATUS_LABEL[item.totals.latestStatus]
+                          : 'belum lapor'}
                       </span>
                       <span class="text-[12px] text-subtle tabular-nums w-12 text-right">{NO_DATA}</span>
                     {/if}
@@ -439,7 +569,7 @@
            entities" is not the group figure. -->
       <div class="bg-card border border-border rounded-lg p-5">
         <h2 class="text-[13px] font-semibold text-foreground mb-4">
-          Konsolidasi {formatPeriod(data.period)}
+          Konsolidasi {data.rangeLabel}
         </h2>
         <div class="overflow-x-auto">
           <table class="w-full text-[12px]">
