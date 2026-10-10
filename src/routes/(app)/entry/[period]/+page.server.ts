@@ -10,6 +10,7 @@ import {
   parseAmountInput
 } from '$lib/format';
 import { canEnterReports } from '$lib/roles';
+import { MAX_UPLOAD_BYTES, parseWorkbook } from '$lib/server/report-excel';
 import { loadEntryAccess } from '../access';
 import { fetchRekapOperasional, petakanBiaya, type PemetaanBiaya } from './operational';
 import type { Actions, PageServerLoad } from './$types';
@@ -508,6 +509,143 @@ export const actions: Actions = {
       rekapOnlyRoutes: rekap.rute_rekap_saja,
       unmappedExpenses: terpetakan.belumDipetakan,
       skippedExpenses: terpetakan.tidakDitarik
+    };
+  },
+
+  /**
+   * Isi periode draft dari file Excel (template yang diunduh dari layar ini).
+   *
+   * Semua-atau-tidak-sama-sekali: kode di luar template, kode ganda, atau
+   * nominal yang tak terbaca menolak seluruh file sebelum satu baris pun
+   * ditulis — laporan setengah terisi terlihat lengkap.
+   *
+   * Sel Jumlah yang kosong tidak mengubah pos itu, dan sel Catatan yang kosong
+   * tidak menghapus catatan yang ada. Baris yang ditulis ditandai
+   * source = 'import'. Periode non-draft ditolak trigger seperti biasa.
+   */
+  importExcel: async ({ locals, params, request }) => {
+    if (!canEnterReports(locals.role)) {
+      return fail(403, { message: 'Laporan diisi oleh staf entitas.' });
+    }
+
+    const form = await request.formData();
+    const target = await resolvePeriod(locals, params.period, String(form.get('entitas') ?? ''));
+    if (!target.ok) return fail(target.status, { message: target.message });
+
+    const file = form.get('file');
+    if (!(file instanceof File) || file.size === 0) {
+      return fail(400, { message: 'Pilih file Excel (.xlsx) terlebih dahulu.' });
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return fail(400, { message: 'File terlalu besar. Batasnya 2 MB.' });
+    }
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      return fail(400, { message: 'Hanya file .xlsx yang diterima. Simpan ulang file sebagai Excel Workbook.' });
+    }
+
+    const parsed = await parseWorkbook(await file.arrayBuffer());
+    if (!parsed.ok) return fail(400, { message: parsed.message });
+
+    if (parsed.meta && (parsed.meta.entity !== target.entityCode || parsed.meta.month !== params.period)) {
+      return fail(409, {
+        message: `File ini untuk ${parsed.meta.entity} ${parsed.meta.month}, bukan ${target.entityCode} ${params.period}. Unduh template dari periode yang benar.`
+      });
+    }
+
+    const { data: templateLines, error: templateError } = await locals.supabase
+      .from('report_template_lines')
+      .select('line_code')
+      .eq('template_id', target.templateId)
+      .eq('is_active', true)
+      .returns<{ line_code: string }[]>();
+    if (templateError) {
+      return fail(500, { message: explain('report_template_lines', templateError, 'Gagal memuat template laporan.') });
+    }
+
+    const known = new Set((templateLines ?? []).map((l) => l.line_code));
+    const unknown = parsed.rows.filter((r) => !known.has(r.line_code));
+    if (unknown.length > 0) {
+      return fail(409, {
+        message:
+          'Ada kode pos yang tidak ada di template periode ini, jadi tidak ada baris yang ditulis: ' +
+          unknown.map((r) => `${r.line_code} (baris ${r.row})`).join(', ') +
+          '.'
+      });
+    }
+
+    const seen = new Map<string, number>();
+    for (const r of parsed.rows) {
+      if (seen.has(r.line_code)) {
+        return fail(409, {
+          message: `Kode ${r.line_code} muncul dua kali (baris ${seen.get(r.line_code)} dan ${r.row}). Tidak ada baris yang ditulis.`
+        });
+      }
+      seen.set(r.line_code, r.row);
+    }
+
+    const filled = parsed.rows.filter((r) => r.amount !== null);
+    const oversized = filled.find((r) => Math.abs(Number(r.amount)) >= AMOUNT_LIMIT);
+    if (oversized) {
+      return fail(400, { message: `Nominal pada ${oversized.line_code} (baris ${oversized.row}) terlalu besar.` });
+    }
+    if (filled.length === 0) {
+      return fail(400, { message: 'Kolom Jumlah di file masih kosong semua. Tidak ada yang diimpor.' });
+    }
+
+    /**
+     * Pos yang angka dan catatannya sama dengan yang tersimpan tidak ditulis.
+     * Template berisi angka yang sudah ada; menulis ulang semuanya akan
+     * mengganti tanda 'operasional' hasil tarik data menjadi 'import' dan
+     * mengisi audit_log dengan perubahan yang tidak mengubah apa pun.
+     */
+    const { data: stored, error: storedError } = await locals.supabase
+      .from('report_lines')
+      .select('line_code, amount, note')
+      .eq('period_id', target.periodId)
+      .returns<{ line_code: string; amount: Numeric; note: string | null }[]>();
+    if (storedError) {
+      return fail(500, { message: explain('report_lines read', storedError, 'Gagal membaca laporan yang tersimpan.') });
+    }
+    const current = new Map((stored ?? []).map((s) => [s.line_code, s]));
+    const sameCents = (a: Numeric, b: string) => Math.round(Number(a) * 100) === Math.round(Number(b) * 100);
+    const changed = filled.filter((r) => {
+      const s = current.get(r.line_code);
+      if (!s) return true;
+      return !sameCents(s.amount, r.amount!) || (r.note !== null && r.note !== s.note);
+    });
+
+    /**
+     * Dua upsert, bukan satu: baris yang membawa catatan dan baris yang tidak.
+     * Dalam satu upsert, kolom yang tidak dikirim satu baris akan diisi NULL
+     * untuk baris itu, dan catatan yang sudah ditulis staf ikut terhapus.
+     */
+    const base = (r: (typeof filled)[number]) => ({
+      period_id: target.periodId,
+      line_code: r.line_code,
+      amount: r.amount,
+      source: 'import'
+    });
+    const withNote = changed.filter((r) => r.note !== null).map((r) => ({ ...base(r), note: r.note }));
+    const withoutNote = changed.filter((r) => r.note === null).map(base);
+
+    for (const batch of [withNote, withoutNote]) {
+      if (batch.length === 0) continue;
+      const { error: writeError } = await locals.supabase
+        .from('report_lines')
+        .upsert(batch, { onConflict: 'period_id,line_code' });
+      if (writeError) {
+        return fail(400, { message: explain('report_lines import', writeError, 'Gagal menulis baris dari file Excel.') });
+      }
+    }
+
+    const state = await stillDraft(locals.supabase, target.periodId);
+    if (!state.draft) return fail(409, { message: state.message });
+
+    return {
+      imported: changed.length,
+      unchanged: filled.length - changed.length,
+      skipped: parsed.rows.length - filled.length,
+      fileName: file.name
     };
   },
 
