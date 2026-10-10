@@ -479,22 +479,20 @@ memengaruhi laporan mana pun.
 
 ## 6. Batasan dan temuan yang perlu diketahui
 
-Temuan ini ada di **sistem operasional**. Belum diperbaiki dan di luar cakupan
-perubahan 4 Oktober.
+Status per 10 Oktober 2026. Perbaikan sistem operasional ada di
+Lathif21/imr-operasional#5, perbaikan portal di Lathif21/IMR_keu#11. Selama
+kedua PR itu belum di-merge, perilaku lama masih berlaku di production.
 
-1. **Iuran Paguyuban tidak bisa dibuat lewat layar.**
-   - Kapal tidak bisa diberi paguyuban dari form Kapal.
-   - Form tambah transaksi menyembunyikan tonase (selalu 0), padahal baris iuran hanya dibuat kalau tonase lebih dari 0.
-   - Halaman paguyuban (`/laporan/paguyuban`) juga tidak ada di menu.
-   - Akibatnya `COGS_PAGUYUBAN` selalu 0 kalau data diisi lewat layar. Perhitungannya sendiri sudah diuji otomatis dengan data dummy.
-2. **Gaji admin tidak terikat bulan.** Halaman Gaji Karyawan untuk admin menampilkan dan mengubah **baris yang sama** di bulan mana pun. Baris gaji admin hanya tercatat di bulan **saat pertama kali disimpan**, sehingga bulan-bulan berikutnya tidak punya gaji admin di tarik data.
-   - Sampai ini diperbaiki, sebaiknya gaji karyawan diambil dari **pengeluaran berjenis gaji** (dicatat tiap bulan), dan "Gaji Admin Bulanan" diset **Tidak ditarik**.
-3. **Honor telly per truk** (bukan per kegiatan kapal) tidak bisa dibuat lewat layar, karena form truk tidak punya kolom telly. Honor telly yang berfungsi adalah lewat **Petugas Telly** di Edit Data kegiatan kapal, seperti di B2.
-4. **Karyawan yang punya gaji admin tidak bisa dihapus**, dan baris gaji admin tidak punya tombol hapus. Saat penghapusan ditolak, sistem operasional juga membuka modal "Tambah Karyawan" yang menutupi pesan error-nya. *(Ditemukan saat end-to-end, 6 Oktober 2026.)*
-
-Temuan di **portal keuangan**:
-
-5. **Layar input hanya menerima rupiah bulat.** Hasil tarik data bisa bersen. Contohnya pajak Oktober 2026 tersimpan 1.897,50, tapi ditampilkan 1.898. Kalau staf menekan Simpan Draft atau Ajukan, angka itu tersimpan ulang sebagai **1.898** dan barisnya menjadi "manual". Selisihnya paling banyak Rp 0,50 per pos. *(Ditemukan saat end-to-end, 6 Oktober 2026; belum diperbaiki.)*
+| # | Temuan | Status |
+|---|---|---|
+| 1 | **Iuran Paguyuban selalu 0**: hanya dihitung di form transaksi yang menyembunyikan tonase. | **Diperbaiki (#5).** Dihitung saat Rincian Pembayaran Truk disimpan: tonase × Rp 500 (rumus lama, untuk setiap truk bertonase), dan masih bisa dikoreksi di portal. Kapal belum bisa ditandai ikut paguyuban mana, dan `/laporan/paguyuban` belum ada di menu; aturan bisnisnya belum pasti. |
+| 2 | **Gaji admin tidak terikat bulan**: satu baris dipakai untuk semua bulan. | **Diperbaiki (#5).** Satu baris per bulan. |
+| 3 | **Honor telly per truk** tidak bisa dibuat lewat layar. | Belum. Honor telly yang dipakai adalah lewat **Petugas Telly** di Edit Data kegiatan kapal, seperti di B2. |
+| 4 | **Error hapus karyawan tertutup** modal "Tambah Karyawan". | **Diperbaiki (#5).** Karyawan yang punya baris gaji tetap tidak bisa dihapus (disengaja), dan baris gaji admin tetap tidak punya tombol hapus. |
+| 5 | **Simpan Draft membulatkan nominal bersen** hasil tarik data (1.897,50 → 1.898). | **Diperbaiki (#11).** Baris yang hanya dibulatkan tampilan tidak ditulis ulang. |
+| 6 | **Detail Kegiatan Kapal tidak punya tombol tambah**, padahal Pembayaran Truck menyuruh menambah kegiatan di sana. | **Diperbaiki (#5).** Tombol "+ Tambah Kegiatan Kapal" di kedua halaman. |
+| 7 | **Bulan Pengiriman tidak mengikuti Tanggal Kegiatan**, jadi kegiatan bulan lalu bisa tersimpan di bulan berjalan. | **Diperbaiki (#5).** |
+| 8 | **Periode yang sudah disetujui tidak bisa dikembalikan ke draft** dari Persetujuan, kecuali lewat Kunci lalu Buka Kunci. | **Diperbaiki (#11).** Tombol "Kembalikan ke draft...". |
 
 ---
 
@@ -513,10 +511,14 @@ HANYA_BERSIH=1 node tests/e2e/test-case-integrasi.mjs   # hanya bersih-bersih
 
 Tangkapan layar dan `hasil.json` ditulis ke `tests/e2e/hasil/test-case/`.
 
-**Hasil 6 Oktober 2026 (tanpa akun direksi):** 16 lulus, 9 dilewati, dan B5
-tercatat gagal karena salah cek di skrip. Tangkapan layar menunjukkan gaji admin
-5.000.000 tersimpan, dan C3 membuktikan angka itu ikut ditarik; pengecekannya
-sudah diperbaiki. Data uji sudah dibersihkan, dan Desember 2026 kembali nol.
+**Hasil 10 Oktober 2026 (dengan akun direksi, ke production):** **25 lulus,
+0 gagal**, 1 dilewati: O1, karena Oktober 2026 sudah berstatus Disetujui. Seluruh
+A1–F3 terjalankan, termasuk pemetaan biaya D1–D6. Data uji sudah dibersihkan,
+Desember 2026 kembali nol, dan pemetaan uji terhapus.
+
+Uji ini memakai kode yang sedang live, sebelum #5 dan #11 di-merge. Setelah
+keduanya di-merge, angka Iuran Paguyuban di C2 akan menjadi 5.000 (10 ton × Rp 500),
+bukan 0; harapan di skrip dan tabel 3b perlu disesuaikan.
 
 ## 8. Lembar hasil
 

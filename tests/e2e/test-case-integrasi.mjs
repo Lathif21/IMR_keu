@@ -431,18 +431,30 @@ const anomaliTombol = [];
 async function tarik(page) {
   const tombol = page.getByRole('button', { name: /Tarik data operasional/ });
   if (!(await tombol.waitFor({ state: 'visible', timeout: 8_000 }).then(() => true, () => false))) {
-    anomaliTombol.push(new URL(page.url()).pathname);
+    // Hanya periode draft yang seharusnya punya tombol ini.
+    const draft = /·\s*Draft/.test(await page.locator('body').innerText());
+    if (draft) anomaliTombol.push(new URL(page.url()).pathname);
     await foto(page, 'anomali-tombol-hilang');
     await page.reload({ waitUntil: 'networkidle' });
   }
+
+  // Banner yang sudah ada sebelum klik (mis. "Dikembalikan ke draft: ...")
+  // bukan jawaban tarik data. Yang dibaca hanya pesan yang baru muncul.
+  const sebelum = new Set(await page.locator('[role="status"], [role="alert"]').allInnerTexts());
   await tombol.click();
-  const pesan = page.locator('[role="status"], [role="alert"]').filter({ hasText: /\S/ }).first();
-  await pesan.waitFor({ state: 'visible', timeout: 45_000 });
+  await page.waitForFunction(
+    (lama) => [...document.querySelectorAll('[role="status"], [role="alert"]')]
+      .some((el) => el.innerText.trim() !== '' && !lama.includes(el.innerText)),
+    [...sebelum],
+    { timeout: 45_000 }
+  );
   await page.waitForLoadState('networkidle');
-  const alert = page.locator('[role="alert"]').filter({ hasText: /\S/ });
-  const gagal = (await alert.count()) > 0;
-  const status = (await page.locator('[role="status"]').allInnerTexts()).join(' | ').replace(/\s+/g, ' ');
-  return { gagal, teks: gagal ? (await alert.last().innerText()).replace(/\s+/g, ' ') : status };
+
+  const baru = async (role) =>
+    (await page.locator(`[role="${role}"]`).allInnerTexts()).filter((t) => t.trim() && !sebelum.has(t));
+  const alerts = await baru('alert');
+  const status = (await baru('status')).join(' | ').replace(/\s+/g, ' ');
+  return { gagal: alerts.length > 0, teks: alerts.length ? alerts.at(-1).replace(/\s+/g, ' ') : status };
 }
 
 const NOL = Object.fromEntries(SEMUA.map((k) => [k, 0]));
@@ -647,12 +659,16 @@ try {
   const barisIlj = dir.locator('tr', { hasText: /ILJ|Indo Moda Raya/ }).first();
   await Promise.all([dir.waitForLoadState('networkidle'), barisIlj.getByText('Tolak...').click()]);
   await dir.locator('textarea[name="note"]').first().fill('UJI-INTEGRASI selesai');
-  await Promise.all([dir.waitForLoadState('networkidle'), dir.getByRole('button', { name: 'Tolak & kembalikan ke draft' }).click()]);
-  await dir.waitForTimeout(1_500);
+  await dir.getByRole('button', { name: 'Tolak & kembalikan ke draft' }).click();
+  // Tunggu jawaban server, bukan jeda tetap: pesan sukses Persetujuan.
+  await dir.getByText('Periode dikembalikan ke draft').waitFor({ timeout: 30_000 });
 
   await bukaInput(staf);
   const teksE3 = await staf.locator('body').innerText();
-  const tombolSetelahDitolak = await staf.getByRole('button', { name: /Tarik data operasional/ }).count();
+  const tombolSetelahDitolak = await staf
+    .getByRole('button', { name: /Tarik data operasional/ })
+    .waitFor({ state: 'visible', timeout: 15_000 })
+    .then(() => 1, () => 0);
   catat('E3', tombolSaatDiajukan === 0 && tombolSetelahDitolak > 0 && teksE3.includes('UJI-INTEGRASI selesai'),
     `tombol saat diajukan: ${tombolSaatDiajukan ? 'TAMPIL' : 'hilang'}; setelah ditolak: ${tombolSetelahDitolak ? 'muncul' : 'TIDAK muncul'}`);
 } catch (error) {
@@ -702,12 +718,17 @@ try {
   // O1 — data nyata Oktober 2026
   try {
     await bukaInput(staf, OKTOBER);
+    const statusOkt = (await staf.locator('body').innerText()).match(/·\s*(Draft|Diajukan|Disetujui|Dikunci)/)?.[1];
+    if (statusOkt && statusOkt !== 'Draft') {
+      catat('O1', null, `Oktober 2026 berstatus ${statusOkt}; tarik data hanya untuk periode draft`);
+      throw new SelesaiTanpaDireksi();
+    }
     const oPesan = await tarik(staf);
     const o = await bacaPos(staf, POS_OPS);
     await foto(staf, 'keu-o1-oktober');
     catat('O1', !oPesan.gagal && o.REV_TAGIHAN > 0, `Oktober 2026: ${Object.entries(o).map(([k, v]) => `${k}=${rp(v)}`).join(', ')}`);
   } catch (error) {
-    catat('O1', false, error instanceof Error ? error.message.split('\n')[0] : String(error));
+    if (!(error instanceof SelesaiTanpaDireksi)) catat('O1', false, error instanceof Error ? error.message.split('\n')[0] : String(error));
   }
 
   catat(
