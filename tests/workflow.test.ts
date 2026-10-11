@@ -229,6 +229,35 @@ describe('catatan wajib', () => {
     expect(error?.message).toContain('wajib disertai catatan');
     expect(await statusOf(id)).toBe('approved');
   });
+
+  /**
+   * Jalur tombol "Kembalikan ke draft..." di Persetujuan: periode yang sudah
+   * disetujui dikembalikan ke draft dengan alasan, tanpa harus dikunci lalu
+   * dibuka. Staf entitas tidak boleh melakukannya.
+   */
+  it('dengan alasan, persetujuan bisa dibatalkan oleh penyetuju, bukan staf', async () => {
+    const id = await seedPeriod({
+      entityCode: 'ILJ',
+      period: '2030-05-01',
+      status: 'approved',
+      lines: [{ line_code: 'REV_TAGIHAN', amount: 5_000_000 }]
+    });
+
+    const byStaff = await staff
+      .from('periods')
+      .update({ status: 'draft', rejection_note: 'koreksi rekanan' })
+      .eq('id', id)
+      .select('status');
+    expect(byStaff.error !== null || (byStaff.data ?? []).length === 0).toBe(true);
+    expect(await statusOf(id)).toBe('approved');
+
+    const byManager = await manager
+      .from('periods')
+      .update({ status: 'draft', rejection_note: 'koreksi rekanan' })
+      .eq('id', id);
+    expect(byManager.error).toBeNull();
+    expect(await statusOf(id)).toBe('draft');
+  });
 });
 
 describe('membuka kunci', () => {

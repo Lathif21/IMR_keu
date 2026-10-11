@@ -7,7 +7,18 @@ import type {
   ReportingBasis,
   RevenuePresentation
 } from '$lib/domain';
-import { previousPeriod } from '$lib/format';
+import {
+  aggregateConsolidated,
+  entityTotals,
+  previousRange,
+  rangeCompleteness,
+  rangeLabel,
+  resolveRange,
+  type EntityTotals,
+  type PeriodRange,
+  type RangeCompleteness,
+  type RangeConsolidated
+} from '$lib/period-range';
 import { canEnterReports, canReadAllEntities } from '$lib/roles';
 import type { PageServerLoad } from './$types';
 
@@ -53,11 +64,17 @@ const EMPTY = {
    */
   scopedNext: null as { href: string; label: string } | null,
   periods: [] as PeriodCompleteness[],
+  range: null as PeriodRange | null,
+  prior: null as PeriodRange | null,
+  rangeLabel: '',
+  priorLabel: '',
   period: null as string | null,
-  completeness: null as PeriodCompleteness | null,
-  consolidated: null as GroupConsolidated | null,
-  previous: null as GroupConsolidated | null,
+  completeness: null as RangeCompleteness | null,
+  priorCompleteness: null as RangeCompleteness | null,
+  consolidated: null as RangeConsolidated | null,
+  previous: null as RangeConsolidated | null,
   pnl: [] as PeriodPnl[],
+  totals: {} as Record<string, EntityTotals>,
   entities: [] as EntityRow[],
   openPolicies: [] as OpenPolicy[]
 };
@@ -92,25 +109,29 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const periods = periodRows ?? [];
   if (periods.length === 0) return { ...EMPTY, periods };
 
-  // An unknown ?periode= falls back to the newest period rather than 404ing —
-  // a stale bookmark should still land somewhere truthful.
-  const requested = url.searchParams.get('periode');
-  const selected = periods.find((p) => p.period === requested) ?? periods[0];
-  const period = selected.period;
+  const range = resolveRange(url.searchParams, periods[0].period);
+  const prior = previousRange(range);
 
   const [consolidatedResult, previousResult, pnlResult, entitiesResult, policiesResult] =
     await Promise.all([
       supabase
         .from('v_group_consolidated')
         .select('*')
-        .eq('period', period)
-        .maybeSingle<GroupConsolidated>(),
+        .gte('period', range.from)
+        .lte('period', range.to)
+        .returns<GroupConsolidated[]>(),
       supabase
         .from('v_group_consolidated')
         .select('*')
-        .eq('period', previousPeriod(period))
-        .maybeSingle<GroupConsolidated>(),
-      supabase.from('v_period_pnl').select('*').eq('period', period).returns<PeriodPnl[]>(),
+        .gte('period', prior.from)
+        .lte('period', prior.to)
+        .returns<GroupConsolidated[]>(),
+      supabase
+        .from('v_period_pnl')
+        .select('*')
+        .gte('period', range.from)
+        .lte('period', range.to)
+        .returns<PeriodPnl[]>(),
       supabase
         .from('entities')
         .select(
@@ -136,16 +157,27 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     policiesResult.error;
   if (firstError) fail('dashboard queries', firstError);
 
+  const entities = entitiesResult.data ?? [];
+  const activeCodes = entities.map((e) => e.code);
+  const pnl = pnlResult.data ?? [];
+
   return {
     ...EMPTY,
     periods,
-    period,
-    completeness: selected,
-    consolidated: consolidatedResult.data,
-    /** Previous calendar month. Month-over-month — not year-over-year. */
-    previous: previousResult.data,
-    pnl: pnlResult.data ?? [],
-    entities: entitiesResult.data ?? [],
+    range,
+    prior,
+    rangeLabel: rangeLabel(range),
+    priorLabel: rangeLabel(prior),
+    /** Kept for the single-month screens below that still speak in one period. */
+    period: range.to,
+    completeness: rangeCompleteness(range, periods, activeCodes),
+    priorCompleteness: rangeCompleteness(prior, periods, activeCodes),
+    consolidated: aggregateConsolidated(consolidatedResult.data ?? []),
+    /** Same-length range just before. MoM, YoY, or "vs. sebelumnya" — never mislabelled. */
+    previous: aggregateConsolidated(previousResult.data ?? []),
+    pnl,
+    totals: Object.fromEntries(entityTotals(pnl)),
+    entities,
     openPolicies: policiesResult.data ?? []
   };
 };

@@ -206,6 +206,21 @@ export function parseAmountInput(raw: string | null | undefined): number {
  */
 export const AMOUNT_LIMIT = 1e16;
 
+/**
+ * True when `posted` is only the entry screen's rounding of `stored`, not an
+ * edit.
+ *
+ * The form shows and posts whole Rupiah, but pulled figures can carry sen
+ * (0,5% tax on 379.500 is 1.897,50). Saving the form untouched would rewrite
+ * 1.897,50 as 1.898 and mark the line manual — a silent change no one made.
+ * Comparing through `formatAmount` uses the exact rounding the screen used.
+ */
+export function isDisplayRounding(stored: string | number | null | undefined, posted: number): boolean {
+  const exact = toAmount(stored);
+  if (exact === null || Number.isInteger(exact)) return false;
+  return parseAmountInput(formatAmount(exact)) === posted;
+}
+
 /** "2025-12-01" -> "2026-01-01". Default month for the next new period. */
 export function nextPeriod(period: string): string {
   const [y, m] = period.split('-').map(Number);

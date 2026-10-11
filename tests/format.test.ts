@@ -19,6 +19,7 @@ import {
   formatDeltaPoints,
   formatPct,
   formatPeriod,
+  isDisplayRounding,
   momPct,
   monthToPeriod,
   nextPeriod,
@@ -225,5 +226,30 @@ describe('NO_DATA', () => {
     expect(formatCompact(0)).not.toBe(NO_DATA);
     expect(formatDelta(0)).not.toBe(NO_DATA);
     expect(formatPct(0)).not.toBe(NO_DATA);
+  });
+});
+
+describe('isDisplayRounding', () => {
+  /** Pajak 0,5% × 379.500 = 1.897,50 tampil 1.898 di layar input. */
+  it('mengenali angka bulat yang hanya hasil pembulatan tampilan', () => {
+    expect(isDisplayRounding('1897.50', 1898)).toBe(true);
+    expect(isDisplayRounding(1897.5, 1898)).toBe(true);
+    expect(isDisplayRounding('1897.40', 1897)).toBe(true);
+  });
+
+  it('angka yang memang diubah orang bukan pembulatan', () => {
+    expect(isDisplayRounding('1897.50', 1900)).toBe(false);
+    expect(isDisplayRounding('1897.50', 1897)).toBe(false);
+  });
+
+  /** Nilai bulat tidak perlu dilindungi: menulisnya ulang tidak mengubah apa pun. */
+  it('nilai tersimpan yang bulat tidak dianggap pembulatan', () => {
+    expect(isDisplayRounding('1898.00', 1898)).toBe(false);
+    expect(isDisplayRounding(null, 0)).toBe(false);
+  });
+
+  it('nilai negatif dan pecahan di bawah satu rupiah', () => {
+    expect(isDisplayRounding('-1500.40', -1500)).toBe(true);
+    expect(isDisplayRounding('0.40', 0)).toBe(true);
   });
 });
